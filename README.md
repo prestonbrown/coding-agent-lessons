@@ -13,13 +13,13 @@ A dynamic learning system for [Claude Code](https://github.com/anthropics/claude
 ## 🚀 Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/peteknowsai/claude-code-lessons/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/prestonbrown/claude-code-lessons/main/install.sh | bash
 ```
 
 Or clone and run:
 
 ```bash
-git clone https://github.com/peteknowsai/claude-code-lessons.git
+git clone https://github.com/prestonbrown/claude-code-lessons.git
 cd claude-code-lessons
 ./install.sh
 ```
