@@ -304,6 +304,9 @@ generate_summary() {
     echo "LESSONS ACTIVE: $system_count system (S###), $project_count project (L###)"
     echo "Cite with [L###] or [S###] when applying. LESSON: to add new."
     echo ""
+    echo "⚠️ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:"
+    echo "   ASK: \"📝 Should I record this as a lesson? [category]: title - content\""
+    echo ""
     echo "TOP LESSONS:"
     head -n "$top_n" "$tmp_all" | while IFS='|' read -r uses id stars title content; do
         echo "  $id $stars $title"
@@ -580,6 +583,10 @@ add_claude_md_instructions() {
     local claude_md="$CLAUDE_DIR/CLAUDE.md"
     local lessons_section='
 ## Lessons System (Dynamic Learning)
+
+⚠️ **LESSON DUTY** - BE PROACTIVE!
+When user corrects you, something fails, or you discover a pattern:
+→ ASK: "📝 Should I record this as a lesson? category: title - content"
 
 A tiered cache that tracks corrections/patterns you teach Claude. **Survives across sessions.**
 
