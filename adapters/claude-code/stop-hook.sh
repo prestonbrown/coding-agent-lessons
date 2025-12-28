@@ -28,10 +28,59 @@ find_project_root() {
     echo "$1"
 }
 
+# Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
+# Runs opportunistically: max 10 files per invocation, only files >7 days old
+cleanup_orphaned_checkpoints() {
+    local max_age_days=7
+    local max_cleanup=10
+    local cleaned=0
+
+    [[ -d "$STATE_DIR" ]] || return 0
+
+    for state_file in "$STATE_DIR"/*; do
+        [[ -f "$state_file" ]] || continue
+        [[ $cleaned -ge $max_cleanup ]] && break
+
+        local session_id=$(basename "$state_file")
+        local found=false
+
+        # Check if transcript exists in Claude's project directories
+        if find ~/.claude/projects -name "${session_id}.jsonl" -type f 2>/dev/null | grep -q .; then
+            found=true
+        fi
+
+        # If transcript not found and checkpoint is old enough, delete it
+        if [[ "$found" == "false" ]]; then
+            # Get file age in days (macOS: stat -f %m, Linux: stat -c %Y)
+            local now=$(date +%s)
+            local mtime=$(stat -f %m "$state_file" 2>/dev/null || stat -c %Y "$state_file" 2>/dev/null || echo "")
+
+            # Safety: if stat failed or returned non-numeric, treat as new (don't delete)
+            if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+                mtime=$now
+            fi
+
+            local file_age_days=$(( (now - mtime) / 86400 ))
+
+            if [[ $file_age_days -gt $max_age_days ]]; then
+                rm -f "$state_file"
+                ((cleaned++)) || true
+            fi
+        fi
+    done
+
+    (( cleaned > 0 )) && echo "[lessons] Cleaned $cleaned orphaned checkpoint(s)" >&2
+}
+
 main() {
     is_enabled || exit 0
 
+    # Read input first (stdin must be consumed before other operations)
     local input=$(cat)
+
+    # Opportunistic cleanup runs early (doesn't depend on current session)
+    cleanup_orphaned_checkpoints
+
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
     local project_root=$(find_project_root "$cwd")
     local transcript_path=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
@@ -76,13 +125,15 @@ main() {
     # Filter out lesson listings (ID followed by star rating bracket)
     # Real citations: "[L010]:" or "[L010]," (no star bracket)
     # Listings: "[L010] [*****" (ID followed by star rating)
+    # Cache all text to avoid running jq per-citation
+    local all_text=$(jq -r '.message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
     local filtered_citations=""
     while IFS= read -r cite; do
         [[ -z "$cite" ]] && continue
         # Check if this citation appears with a star bracket immediately after
-        # If transcript contains "[L010] [*" pattern, skip it
-        if ! jq -r '.message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -qE "\\$cite \\[\\*"; then
+        # Escape regex metacharacters in citation ID
+        local escaped_cite=$(printf '%s' "$cite" | sed 's/[][\\.*^$()+?{|]/\\&/g')
+        if ! echo "$all_text" | grep -qE "${escaped_cite} \\[\\*"; then
             filtered_citations+="$cite"$'\n'
         fi
     done <<< "$citations"

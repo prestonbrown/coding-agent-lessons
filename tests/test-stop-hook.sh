@@ -317,6 +317,161 @@ test_lesson_use_count_incremented() {
 }
 
 # =============================================================================
+# Cleanup Tests
+# =============================================================================
+
+test_cleanup_removes_old_orphans() {
+    # Create a fake orphan checkpoint (no matching transcript)
+    local state_dir="$LESSONS_BASE/.citation-state"
+    mkdir -p "$state_dir"
+    local orphan_file="$state_dir/fake-orphan-session-id"
+    echo "2025-01-01T00:00:00.000Z" > "$orphan_file"
+
+    # Backdate it to 10 days ago (beyond 7-day threshold)
+    touch -t 202401010000 "$orphan_file"
+
+    # Run the hook (which triggers cleanup)
+    local transcript="$TEST_DIR/test.jsonl"
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "No citations here")"
+    run_hook "$transcript"
+
+    # Orphan should be deleted
+    [[ ! -f "$orphan_file" ]] || {
+        echo "Orphan checkpoint should have been deleted"
+        return 1
+    }
+}
+
+test_cleanup_keeps_recent_orphans() {
+    # Create a fake orphan checkpoint (no matching transcript)
+    local state_dir="$LESSONS_BASE/.citation-state"
+    mkdir -p "$state_dir"
+    local orphan_file="$state_dir/fake-recent-orphan-id"
+    echo "2025-01-01T00:00:00.000Z" > "$orphan_file"
+
+    # Don't backdate - it's recent (within 7 days)
+    # File will have current mtime
+
+    # Run the hook (which triggers cleanup)
+    local transcript="$TEST_DIR/test.jsonl"
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "No citations here")"
+    run_hook "$transcript"
+
+    # Recent orphan should be kept
+    [[ -f "$orphan_file" ]] || {
+        echo "Recent orphan checkpoint should NOT have been deleted"
+        return 1
+    }
+}
+
+# =============================================================================
+# Decay Tests
+# =============================================================================
+
+test_decay_reduces_stale_lesson_uses() {
+    # Create a lesson with old last-used date
+    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    mkdir -p "$(dirname "$lessons_file")"
+
+    # Create a lesson that was last used 60 days ago with 5 uses
+    local old_date=$(date -v-60d +%Y-%m-%d 2>/dev/null || date -d "60 days ago" +%Y-%m-%d)
+    cat > "$lessons_file" << EOF
+# LESSONS.md - System Level
+
+## Active Lessons
+
+### [S001] [**+--/-----] Old lesson
+- **Uses**: 5 | **Learned**: 2024-01-01 | **Last**: $old_date | **Category**: pattern
+> This is an old lesson that should decay
+
+EOF
+
+    # Create a checkpoint to simulate activity
+    local state_dir="$LESSONS_BASE/.citation-state"
+    mkdir -p "$state_dir"
+    touch "$state_dir/recent-session"
+
+    # Run decay
+    local output=$("$MANAGER" decay 30 2>&1)
+
+    # Check that uses decreased (note: **Uses** in markdown)
+    local new_uses=$(grep -oE '\*\*Uses\*\*: [0-9]+' "$lessons_file" | grep -oE '[0-9]+')
+    [[ "$new_uses" -eq 4 ]] || {
+        echo "Uses should have decreased from 5 to 4, got: $new_uses"
+        return 1
+    }
+}
+
+test_decay_skips_without_activity() {
+    # Create a lesson with old last-used date
+    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    mkdir -p "$(dirname "$lessons_file")"
+
+    local old_date=$(date -v-60d +%Y-%m-%d 2>/dev/null || date -d "60 days ago" +%Y-%m-%d)
+    cat > "$lessons_file" << EOF
+# LESSONS.md - System Level
+
+## Active Lessons
+
+### [S001] [**+--/-----] Vacation lesson
+- **Uses**: 5 | **Learned**: 2024-01-01 | **Last**: $old_date | **Category**: pattern
+> This should not decay if no sessions occurred
+
+EOF
+
+    # Create decay state file (simulating previous decay ran)
+    echo "$(date +%s)" > "$LESSONS_BASE/.decay-last-run"
+
+    # Don't create any checkpoints (simulating no coding activity)
+
+    # Run decay
+    local output=$("$MANAGER" decay 30 2>&1)
+    assert_contains "$output" "No sessions since last decay" "Should skip decay without activity"
+
+    # Uses should remain unchanged (note: **Uses** in markdown)
+    local new_uses=$(grep -oE '\*\*Uses\*\*: [0-9]+' "$lessons_file" | grep -oE '[0-9]+')
+    [[ "$new_uses" -eq 5 ]] || {
+        echo "Uses should remain at 5 without activity, got: $new_uses"
+        return 1
+    }
+}
+
+test_decay_never_below_one() {
+    # Create a lesson with uses=1 and old date
+    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    mkdir -p "$(dirname "$lessons_file")"
+
+    local old_date=$(date -v-60d +%Y-%m-%d 2>/dev/null || date -d "60 days ago" +%Y-%m-%d)
+    cat > "$lessons_file" << EOF
+# LESSONS.md - System Level
+
+## Active Lessons
+
+### [S001] [+----/-----] Minimal lesson
+- **Uses**: 1 | **Learned**: 2024-01-01 | **Last**: $old_date | **Category**: pattern
+> This should never go below 1
+
+EOF
+
+    # Create a checkpoint to simulate activity
+    local state_dir="$LESSONS_BASE/.citation-state"
+    mkdir -p "$state_dir"
+    touch "$state_dir/recent-session"
+
+    # Run decay
+    "$MANAGER" decay 30 >/dev/null 2>&1
+
+    # Uses should still be 1 (floor) - note: **Uses** in markdown
+    local new_uses=$(grep -oE '\*\*Uses\*\*: [0-9]+' "$lessons_file" | grep -oE '[0-9]+')
+    [[ "$new_uses" -eq 1 ]] || {
+        echo "Uses should remain at minimum 1, got: $new_uses"
+        return 1
+    }
+}
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
@@ -339,6 +494,25 @@ run_test test_incremental_processing_skips_old
 run_test test_incremental_processing_catches_new
 run_test test_handles_system_lessons
 run_test test_lesson_use_count_incremented
+
+echo ""
+echo "========================================"
+echo "  Cleanup Tests"
+echo "========================================"
+echo ""
+
+run_test test_cleanup_removes_old_orphans
+run_test test_cleanup_keeps_recent_orphans
+
+echo ""
+echo "========================================"
+echo "  Decay Tests"
+echo "========================================"
+echo ""
+
+run_test test_decay_reduces_stale_lesson_uses
+run_test test_decay_skips_without_activity
+run_test test_decay_never_below_one
 
 echo ""
 echo "========================================"

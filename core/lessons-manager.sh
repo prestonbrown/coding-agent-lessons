@@ -489,6 +489,109 @@ evict_lessons() {
     echo "Eviction needed: $count > $max_count (not yet implemented)"
 }
 
+# Update a lesson's uses count directly (for decay)
+update_lesson_uses() {
+    local lesson_id="$1" new_uses="$2" file="$3"
+    [[ ! -f "$file" ]] && return 1
+
+    local tmp_file=$(mktemp) found=false
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^###[[:space:]]*\[($lesson_id)\][[:space:]]*\[([*+/\ -]+)\][[:space:]]*(.*) ]]; then
+            found=true
+            local title="${BASH_REMATCH[3]}"
+            local new_stars=$(uses_to_stars $new_uses)
+            echo "### [$lesson_id] $new_stars $title" >> "$tmp_file"
+            IFS= read -r meta_line
+            echo "$meta_line" | sed -E "s/\*\*Uses\*\*:[[:space:]]*[0-9]+/**Uses**: $new_uses/" >> "$tmp_file"
+        else
+            echo "$line" >> "$tmp_file"
+        fi
+    done < "$file"
+
+    if $found; then
+        mv "$tmp_file" "$file"
+        return 0
+    else
+        rm "$tmp_file"
+        return 1
+    fi
+}
+
+# Decay lessons that haven't been cited recently
+# Only runs if there was coding activity since last decay (to avoid penalizing vacations)
+decay_lessons() {
+    local decay_period=${1:-30}  # Days of staleness before decay kicks in
+    local state_dir="${LESSONS_BASE}/.citation-state"
+    local decay_state="${LESSONS_BASE}/.decay-last-run"
+
+    # Check if there was recent activity (sessions since last decay)
+    local recent_sessions=0
+    if [[ -d "$state_dir" && -f "$decay_state" ]]; then
+        # Count checkpoint files modified since last decay
+        recent_sessions=$(find "$state_dir" -type f -newer "$decay_state" 2>/dev/null | wc -l | tr -d ' ')
+    elif [[ -d "$state_dir" ]]; then
+        # First decay run - count all checkpoints as "recent"
+        recent_sessions=$(find "$state_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # Skip decay if no coding sessions occurred (vacation mode)
+    if [[ $recent_sessions -eq 0 && -f "$decay_state" ]]; then
+        echo "No sessions since last decay - skipping (vacation mode)"
+        date +%s > "$decay_state"  # Update timestamp anyway
+        return 0
+    fi
+
+    local decayed=0
+    for lessons_file in "$SYSTEM_LESSONS_FILE" "$PROJECT_LESSONS_FILE"; do
+        [[ -f "$lessons_file" ]] || continue
+
+        # PHASE 1: Collect lessons that need decay (avoid modifying file while reading)
+        local lessons_to_decay=()
+        local lesson_id="" uses="" last=""
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^###[[:space:]]*\[([LS][0-9]+)\] ]]; then
+                # Check previous lesson
+                if [[ -n "$lesson_id" && -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
+                    local days_stale=$(days_since "$last")
+                    if [[ $days_stale -gt $decay_period ]]; then
+                        lessons_to_decay+=("$lesson_id")
+                    fi
+                fi
+                lesson_id="${BASH_REMATCH[1]}"
+                uses="" last=""
+            elif [[ -n "$lesson_id" && "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
+                uses="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Last\*\*:[[:space:]]*([0-9-]+) ]] && last="${BASH_REMATCH[1]}"
+            fi
+        done < "$lessons_file"
+
+        # Check last lesson
+        if [[ -n "$lesson_id" && -n "$uses" && -n "$last" && $uses -gt 1 ]]; then
+            local days_stale=$(days_since "$last")
+            if [[ $days_stale -gt $decay_period ]]; then
+                lessons_to_decay+=("$lesson_id")
+            fi
+        fi
+
+        # PHASE 2: Apply decay to collected lessons (re-reads fresh values)
+        for lid in "${lessons_to_decay[@]}"; do
+            # Re-read current uses value to avoid stale data issues
+            local current_uses=$(grep -A1 "^### \[$lid\]" "$lessons_file" 2>/dev/null | \
+                grep -oE '\*\*Uses\*\*: [0-9]+' | grep -oE '[0-9]+' || echo "0")
+            if [[ $current_uses -gt 1 ]]; then
+                local new_uses=$((current_uses - 1))
+                if update_lesson_uses "$lid" "$new_uses" "$lessons_file"; then
+                    ((decayed++)) || true
+                fi
+            fi
+        done
+    done
+
+    # Update decay timestamp
+    date +%s > "$decay_state"
+    echo "Decayed $decayed lesson(s) ($recent_sessions sessions since last run)"
+}
+
 show_help() {
     cat << 'EOF'
 lessons-manager.sh - Tool-agnostic AI coding agent lessons
@@ -514,6 +617,7 @@ COMMANDS:
   delete <id>                 Delete a lesson
   promote <id>                Promote project lesson to system scope
   inject [n]                  Output top N lessons for session injection
+  decay [days]                Decay stale lessons (default: 30 days threshold)
   reset-reminder              Reset the periodic reminder counter
 
 CATEGORIES: pattern, correction, decision, gotcha, preference
@@ -555,6 +659,7 @@ main() {
         inject) inject_context "${1:-5}" ;;
         list) list_lessons "$@" ;;
         evict) evict_lessons "${1:-}" ;;
+        decay) decay_lessons "${1:-30}" ;;
         reset-reminder)
             rm -f "$LESSONS_BASE/.reminder-state"
             echo "Reminder counter reset" ;;
