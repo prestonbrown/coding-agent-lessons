@@ -3,12 +3,16 @@
 //
 // Hooks into OpenCode events to:
 // 1. Inject lessons context at session start
-// 2. Track lesson citations when AI responds
+// 2. Track lesson citations when AI responds (with checkpointing)
 // 3. Capture LESSON: commands from user input
 
 import type { Plugin } from "@opencode-ai/plugin"
 
 const MANAGER = "~/.config/coding-agent-lessons/lessons-manager.sh"
+
+// Per-session checkpoint: tracks the last processed message index
+// This ensures we only process new messages on each idle event
+const sessionCheckpoints = new Map<string, number>()
 
 export const LessonsPlugin: Plugin = async ({ $, client }) => {
   return {
@@ -40,35 +44,59 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
     // Track citations when session goes idle (AI finished responding)
     "session.idle": async (input) => {
       try {
+        const sessionId = input.session.id
+
         // Get the messages from this session
-        const messages = await client.session.messages({ 
-          path: { id: input.session.id } 
+        const messages = await client.session.messages({
+          path: { id: sessionId }
         })
-        
-        // Find the last assistant message
-        const assistantMessages = messages.filter(m => m.info.role === "assistant")
-        const lastAssistant = assistantMessages[assistantMessages.length - 1]
-        
-        if (!lastAssistant) return
 
-        // Extract text content
-        const content = lastAssistant.parts
-          .filter(p => p.type === "text")
-          .map(p => (p as { type: "text"; text: string }).text)
-          .join("")
+        // Get checkpoint: last processed message index
+        const checkpoint = sessionCheckpoints.get(sessionId) ?? 0
 
-        // Find [L###] or [S###] citations
-        const citations = content.match(/\[(L|S)\d{3}\]/g) || []
-        const uniqueCitations = [...new Set(citations)]
+        // Find assistant messages after the checkpoint
+        const assistantMessages = messages
+          .map((m, idx) => ({ ...m, idx }))
+          .filter(m => m.info.role === "assistant" && m.idx >= checkpoint)
+
+        if (assistantMessages.length === 0) {
+          // Update checkpoint even if no new messages
+          sessionCheckpoints.set(sessionId, messages.length)
+          return
+        }
+
+        // Extract text content from all new assistant messages
+        const allCitations = new Set<string>()
+
+        for (const msg of assistantMessages) {
+          const content = msg.parts
+            .filter(p => p.type === "text")
+            .map(p => (p as { type: "text"; text: string }).text)
+            .join("")
+
+          // Find [L###] or [S###] citations
+          const citations = content.match(/\[(L|S)\d{3}\]/g) || []
+
+          // Filter out lesson listings (e.g., "[L001] [*****" format)
+          for (const cite of citations) {
+            // Check if this is a real citation (not followed by star rating)
+            if (!content.includes(`${cite} [*`)) {
+              allCitations.add(cite)
+            }
+          }
+        }
 
         // Cite each lesson
-        for (const cite of uniqueCitations) {
+        for (const cite of allCitations) {
           const lessonId = cite.slice(1, -1) // Remove brackets
           await $`${MANAGER} cite ${lessonId}`
         }
 
-        if (uniqueCitations.length > 0) {
-          console.log(`[lessons] Cited: ${uniqueCitations.join(", ")}`)
+        // Update checkpoint to current message count
+        sessionCheckpoints.set(sessionId, messages.length)
+
+        if (allCitations.size > 0) {
+          console.log(`[lessons] Cited: ${[...allCitations].join(", ")}`)
         }
       } catch (e) {
         // Silently fail

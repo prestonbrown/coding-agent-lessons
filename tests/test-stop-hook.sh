@@ -1,0 +1,352 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# test-stop-hook.sh - Tests for Claude Code stop hook citation tracking
+
+set -euo pipefail
+
+# Test configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STOP_HOOK="$SCRIPT_DIR/../adapters/claude-code/stop-hook.sh"
+MANAGER="$SCRIPT_DIR/../core/lessons-manager.sh"
+TEST_DIR=$(mktemp -d)
+TESTS_RUN=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Override paths for testing
+export LESSONS_BASE="$TEST_DIR/.config/coding-agent-lessons"
+export PROJECT_DIR="$TEST_DIR/project"
+export HOME="$TEST_DIR"  # Override HOME for .claude paths
+
+setup() {
+    rm -rf "$TEST_DIR"
+    mkdir -p "$TEST_DIR/project/.git"  # Fake git repo
+    mkdir -p "$LESSONS_BASE"
+    mkdir -p "$TEST_DIR/.claude"
+
+    # Create settings.json with lessons enabled
+    echo '{"lessonsSystem":{"enabled":true}}' > "$TEST_DIR/.claude/settings.json"
+
+    # Symlink manager to where hook expects it (HOME is overridden to TEST_DIR)
+    ln -sf "$MANAGER" "$LESSONS_BASE/lessons-manager.sh"
+
+    # Initialize a test lesson to cite
+    "$MANAGER" add pattern "Test lesson" "This is a test lesson" >/dev/null 2>&1
+}
+
+teardown() {
+    rm -rf "$TEST_DIR"
+}
+
+# Helper: create a mock transcript entry
+create_transcript_entry() {
+    local timestamp="$1"
+    local text="$2"
+    local type="${3:-assistant}"
+
+    cat <<EOF
+{"timestamp":"$timestamp","uuid":"$(uuidgen 2>/dev/null || echo "test-uuid-$RANDOM")","type":"$type","message":{"role":"$type","content":[{"type":"text","text":"$text"}]}}
+EOF
+}
+
+# Helper: create a full mock transcript file
+create_transcript() {
+    local path="$1"
+    shift
+
+    mkdir -p "$(dirname "$path")"
+    : > "$path"  # Clear file
+
+    while [[ $# -gt 0 ]]; do
+        echo "$1" >> "$path"
+        shift
+    done
+}
+
+# Helper: run stop hook with mock input
+run_hook() {
+    local transcript_path="$1"
+    local cwd="${2:-$PROJECT_DIR}"
+
+    echo "{\"transcript_path\":\"$transcript_path\",\"cwd\":\"$cwd\"}" | "$STOP_HOOK" 2>&1 || true
+}
+
+# Assertions
+assert_eq() {
+    local expected="$1"
+    local actual="$2"
+    local msg="${3:-}"
+    if [[ "$expected" == "$actual" ]]; then
+        return 0
+    else
+        echo -e "${RED}ASSERTION FAILED${NC}: $msg"
+        echo "  Expected: '$expected'"
+        echo "  Actual:   '$actual'"
+        return 1
+    fi
+}
+
+assert_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local msg="${3:-}"
+    if [[ "$haystack" == *"$needle"* ]]; then
+        return 0
+    else
+        echo -e "${RED}ASSERTION FAILED${NC}: $msg"
+        echo "  Expected to contain: '$needle'"
+        echo "  Actual: '$haystack'"
+        return 1
+    fi
+}
+
+assert_file_exists() {
+    local file="$1"
+    local msg="${2:-File should exist: $file}"
+    if [[ -f "$file" ]]; then
+        return 0
+    else
+        echo -e "${RED}ASSERTION FAILED${NC}: $msg"
+        return 1
+    fi
+}
+
+assert_file_contains() {
+    local file="$1"
+    local needle="$2"
+    local msg="${3:-}"
+    if [[ -f "$file" ]] && grep -q "$needle" "$file"; then
+        return 0
+    else
+        echo -e "${RED}ASSERTION FAILED${NC}: $msg"
+        if [[ -f "$file" ]]; then
+            echo "  File contents: $(cat "$file")"
+        else
+            echo "  File does not exist: $file"
+        fi
+        return 1
+    fi
+}
+
+run_test() {
+    local test_name="$1"
+    ((TESTS_RUN++))
+    setup
+    echo -n "  Testing: $test_name... "
+    if eval "$test_name"; then
+        echo -e "${GREEN}PASSED${NC}"
+        ((TESTS_PASSED++))
+    else
+        echo -e "${RED}FAILED${NC}"
+        ((TESTS_FAILED++))
+    fi
+    teardown
+}
+
+# =============================================================================
+# Test Cases
+# =============================================================================
+
+test_no_transcript_exits_cleanly() {
+    local output=$(run_hook "/nonexistent/path.jsonl")
+    # Should exit cleanly with no output on missing file
+    [[ -z "$output" || "$output" == *"[lessons]"* ]] || return 0
+}
+
+test_empty_transcript_exits_cleanly() {
+    local transcript="$TEST_DIR/empty.jsonl"
+    : > "$transcript"  # Create empty file
+
+    local output=$(run_hook "$transcript")
+    # Should exit cleanly
+    [[ "$?" -eq 0 ]]
+}
+
+test_extracts_citation_from_assistant_message() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001] for this task")"
+
+    local output=$(run_hook "$transcript")
+    assert_contains "$output" "[lessons] 1 lesson(s) cited" "Should cite 1 lesson"
+}
+
+test_ignores_user_messages() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "The user said [L001]" "user")"
+
+    local output=$(run_hook "$transcript")
+    # Should not cite from user messages
+    [[ "$output" != *"[lessons]"* ]]
+}
+
+test_deduplicates_citations() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001] for this")" \
+        "$(create_transcript_entry "2025-01-01T00:01:00.000Z" "Also [L001] here again")"
+
+    local output=$(run_hook "$transcript")
+    # Should only cite once despite multiple mentions
+    assert_contains "$output" "[lessons] 1 lesson(s) cited" "Should dedupe to 1 citation"
+}
+
+test_multiple_different_citations() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Add another lesson first
+    "$MANAGER" add pattern "Second lesson" "Another test" >/dev/null 2>&1
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001] and [L002]")"
+
+    local output=$(run_hook "$transcript")
+    assert_contains "$output" "[lessons] 2 lesson(s) cited" "Should cite 2 lessons"
+}
+
+test_excludes_lesson_listings() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create message with lesson listing format (should be excluded)
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "[L001] [*****/*****] This is a listing not a citation")"
+
+    local output=$(run_hook "$transcript")
+    # Should NOT cite (it's a listing, not a citation)
+    [[ "$output" != *"[lessons]"* ]]
+}
+
+test_checkpoint_created() {
+    local transcript="$TEST_DIR/test-session.jsonl"
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001]")"
+
+    run_hook "$transcript"
+
+    # Check checkpoint file exists
+    local state_dir="$LESSONS_BASE/.citation-state"
+    assert_file_exists "$state_dir/test-session" "Checkpoint file should exist"
+}
+
+test_checkpoint_contains_timestamp() {
+    local transcript="$TEST_DIR/test-session.jsonl"
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T12:30:45.123Z" "Applying [L001]")"
+
+    run_hook "$transcript"
+
+    local state_file="$LESSONS_BASE/.citation-state/test-session"
+    assert_file_contains "$state_file" "2025-01-01T12:30:45.123Z" "Checkpoint should contain timestamp"
+}
+
+test_incremental_processing_skips_old() {
+    local transcript="$TEST_DIR/test-session.jsonl"
+
+    # First run: one citation
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001]")"
+    run_hook "$transcript"
+
+    # Second run: same content, should be skipped
+    local output=$(run_hook "$transcript")
+    # Should not cite again (already checkpointed)
+    [[ "$output" != *"[lessons]"* ]]
+}
+
+test_incremental_processing_catches_new() {
+    local transcript="$TEST_DIR/test-session.jsonl"
+
+    # Add second lesson
+    "$MANAGER" add pattern "Second lesson" "Another test" >/dev/null 2>&1
+
+    # First run: one citation
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001]")"
+    run_hook "$transcript"
+
+    # Add new entry with newer timestamp
+    echo "$(create_transcript_entry "2025-01-01T01:00:00.000Z" "Now applying [L002]")" >> "$transcript"
+
+    local output=$(run_hook "$transcript")
+    # Should cite only the new one
+    assert_contains "$output" "[lessons] 1 lesson(s) cited" "Should cite new lesson"
+}
+
+test_handles_system_lessons() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Add a system lesson
+    "$MANAGER" add-system pattern "System lesson" "A system test" >/dev/null 2>&1
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [S001]")"
+
+    local output=$(run_hook "$transcript")
+    assert_contains "$output" "[lessons] 1 lesson(s) cited" "Should cite system lesson"
+}
+
+test_lesson_use_count_incremented() {
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Get initial use count
+    local before=$("$MANAGER" list --verbose 2>/dev/null | grep "\[L001\]" | grep -oE "Uses: [0-9]+" | grep -oE "[0-9]+" || echo "1")
+
+    create_transcript "$transcript" \
+        "$(create_transcript_entry "2025-01-01T00:00:00.000Z" "Applying [L001]")"
+    run_hook "$transcript"
+
+    # Get after use count
+    local after=$("$MANAGER" list --verbose 2>/dev/null | grep "\[L001\]" | grep -oE "Uses: [0-9]+" | grep -oE "[0-9]+" || echo "2")
+
+    [[ "$after" -gt "$before" ]] || {
+        echo "Use count should have increased: before=$before, after=$after"
+        return 1
+    }
+}
+
+# =============================================================================
+# Run Tests
+# =============================================================================
+
+echo ""
+echo "========================================"
+echo "  Stop Hook Citation Tracking Tests"
+echo "========================================"
+echo ""
+
+run_test test_no_transcript_exits_cleanly
+run_test test_empty_transcript_exits_cleanly
+run_test test_extracts_citation_from_assistant_message
+run_test test_ignores_user_messages
+run_test test_deduplicates_citations
+run_test test_multiple_different_citations
+run_test test_excludes_lesson_listings
+run_test test_checkpoint_created
+run_test test_checkpoint_contains_timestamp
+run_test test_incremental_processing_skips_old
+run_test test_incremental_processing_catches_new
+run_test test_handles_system_lessons
+run_test test_lesson_use_count_incremented
+
+echo ""
+echo "========================================"
+echo "  Results: $TESTS_PASSED/$TESTS_RUN passed"
+if [[ $TESTS_FAILED -gt 0 ]]; then
+    echo -e "  ${RED}$TESTS_FAILED tests failed${NC}"
+    exit 1
+else
+    echo -e "  ${GREEN}All tests passed!${NC}"
+fi
+echo "========================================"
