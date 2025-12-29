@@ -41,6 +41,14 @@ STALE_DAYS_DEFAULT = 60
 MAX_USES = 100
 ROBOT_EMOJI = "\U0001f916"  # Robot emoji for AI lessons
 
+# Velocity decay constants
+VELOCITY_DECAY_FACTOR = 0.5  # 50% half-life per decay cycle
+VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
+
+# Approach visibility constants
+APPROACH_MAX_COMPLETED = 3  # Keep last N completed approaches visible
+APPROACH_MAX_AGE_DAYS = 7  # Or completed within N days
+
 
 # =============================================================================
 # Enums
@@ -302,19 +310,25 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[tuple
         old_match = old_meta_pattern.match(meta_line)
         if not old_match:
             return None
-        uses = int(old_match.group(1))
-        velocity = 0.0
-        learned = date.fromisoformat(old_match.group(2))
-        last_used = date.fromisoformat(old_match.group(3))
-        category = old_match.group(4)
-        source = old_match.group(5) or "human"
+        try:
+            uses = int(old_match.group(1))
+            velocity = 0.0
+            learned = date.fromisoformat(old_match.group(2))
+            last_used = date.fromisoformat(old_match.group(3))
+            category = old_match.group(4)
+            source = old_match.group(5) or "human"
+        except ValueError:
+            return None  # Malformed date, skip this lesson
     else:
-        uses = int(meta_match.group(1))
-        velocity = float(meta_match.group(2)) if meta_match.group(2) else 0.0
-        learned = date.fromisoformat(meta_match.group(3))
-        last_used = date.fromisoformat(meta_match.group(4))
-        category = meta_match.group(5)
-        source = meta_match.group(6) or "human"
+        try:
+            uses = int(meta_match.group(1))
+            velocity = float(meta_match.group(2)) if meta_match.group(2) else 0.0
+            learned = date.fromisoformat(meta_match.group(3))
+            last_used = date.fromisoformat(meta_match.group(4))
+            category = meta_match.group(5)
+            source = meta_match.group(6) or "human"
+        except ValueError:
+            return None  # Malformed data, skip this lesson
 
     # Parse content line
     content = ""
@@ -394,11 +408,9 @@ class FileLock:
         if self.lock_file:
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
             self.lock_file.close()
-            # Clean up lock file
-            try:
-                self.lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass  # Ignore cleanup errors (e.g., another process has it)
+            # Note: We don't delete the lock file to avoid race conditions
+            # with other processes trying to acquire the lock. The lock file
+            # is just an empty marker file, so leaving it is harmless.
         return False
 
 
@@ -953,11 +965,11 @@ class LessonsManager:
                 lessons = self._parse_lessons_file(file_path, level)
 
                 for lesson in lessons:
-                    # Decay velocity (50% half-life) for all lessons
-                    if lesson.velocity > 0.01:
+                    # Decay velocity using configured half-life
+                    if lesson.velocity > VELOCITY_EPSILON:
                         old_velocity = lesson.velocity
-                        lesson.velocity = round(lesson.velocity * 0.5, 2)
-                        if lesson.velocity < 0.01:
+                        lesson.velocity = round(lesson.velocity * VELOCITY_DECAY_FACTOR, 2)
+                        if lesson.velocity < VELOCITY_EPSILON:
                             lesson.velocity = 0
                         if lesson.velocity != old_velocity:
                             decayed_velocity += 1
@@ -1940,10 +1952,6 @@ Consider extracting lessons about:
 
         return approaches
 
-    # Constants for approach decay
-    APPROACH_MAX_COMPLETED = 3  # Keep last N completed visible
-    APPROACH_MAX_AGE_DAYS = 7   # Or within N days
-
     def approach_list_completed(
         self,
         max_count: Optional[int] = None,
@@ -1964,9 +1972,9 @@ Consider extracting lessons about:
             List of visible completed approaches, sorted by updated date (newest first)
         """
         if max_count is None:
-            max_count = self.APPROACH_MAX_COMPLETED
+            max_count = APPROACH_MAX_COMPLETED
         if max_age_days is None:
-            max_age_days = self.APPROACH_MAX_AGE_DAYS
+            max_age_days = APPROACH_MAX_AGE_DAYS
 
         if not self.project_approaches_file.exists():
             return []

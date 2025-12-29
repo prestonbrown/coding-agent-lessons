@@ -160,17 +160,17 @@ process_ai_lessons() {
         esac
 
         # Add the lesson using Python manager (with bash fallback)
+        # Use -- to terminate options and prevent injection via crafted titles
         local result=""
         if [[ -f "$PYTHON_MANAGER" ]]; then
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-                python3 "$PYTHON_MANAGER" add-ai "$category" "$title" "$content" 2>&1 || true)
+                python3 "$PYTHON_MANAGER" add-ai -- "$category" "$title" "$content" 2>&1 || true)
         fi
 
         # Fall back to bash manager if Python fails
         if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
-            # Bash manager doesn't have add-ai, would need to be added
-            # For now just skip bash fallback for AI lessons
-            :
+            # Bash manager doesn't support add-ai - log warning
+            echo "[lessons] Warning: AI lesson skipped (Python unavailable, bash fallback not supported)" >&2
         fi
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
@@ -215,9 +215,12 @@ process_approaches() {
 
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
+        # H2: Skip overly long lines to prevent ReDoS in regex matching
+        [[ ${#line} -gt 1000 ]] && continue
         local result=""
 
         # Pattern 1: APPROACH: <title> -> add new approach
+        # Use -- to terminate options and prevent injection via crafted titles
         if [[ "$line" =~ ^APPROACH:\ (.+)$ ]]; then
             local title="${BASH_REMATCH[1]}"
             title=$(sanitize_input "$title" 200)
@@ -225,7 +228,7 @@ process_approaches() {
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-                    python3 "$PYTHON_MANAGER" approach add "$title" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
             fi
 
         # Pattern 1b: PLAN MODE: <title> -> add approach with plan mode defaults
@@ -236,7 +239,7 @@ process_approaches() {
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-                    python3 "$PYTHON_MANAGER" approach add "$title" --phase research --agent plan 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
             fi
 
         # Pattern 2: APPROACH UPDATE A###: status <status>
@@ -282,7 +285,7 @@ process_approaches() {
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" "$description" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" -- "$description" 2>&1 || true)
             fi
 
         # Pattern 4: APPROACH UPDATE A###: next <text>
@@ -293,7 +296,7 @@ process_approaches() {
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --next "$next_text" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
             fi
 
         # Pattern 5: APPROACH COMPLETE A###
@@ -343,7 +346,7 @@ main() {
     # Process AI LESSON: patterns (adds new AI-generated lessons)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
 
-    # Process APPROACH: patterns (placeholder for Phase 2)
+    # Process APPROACH: patterns (approach tracking and plan mode)
     process_approaches "$transcript_path" "$project_root" "$last_timestamp"
 
     # Process entries newer than checkpoint
