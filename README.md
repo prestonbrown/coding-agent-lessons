@@ -145,7 +145,9 @@ The system can infer phases from tool usage:
 ```
 coding-agent-lessons/
 ├── core/
-│   └── lessons_manager.py      # Python implementation (primary)
+│   ├── lessons_manager.py      # Python implementation (primary)
+│   ├── debug_logger.py         # JSON debug logging
+│   └── lessons-manager.sh      # Bash wrapper (calls Python)
 ├── adapters/
 │   ├── claude-code/
 │   │   ├── inject-hook.sh      # SessionStart - injects context
@@ -153,8 +155,9 @@ coding-agent-lessons/
 │   └── opencode/
 │       └── ...
 └── tests/
-    ├── test_lessons_manager.py # 62 lesson tests
-    └── test_approaches.py      # 139 approach tests
+    ├── test_lessons_manager.py # Lesson tests
+    ├── test_approaches.py      # Approach tests
+    └── test_debug_logger.py    # Debug logger tests
 ```
 
 ## CLI Reference
@@ -228,7 +231,38 @@ APPROACH COMPLETE A###                         # Mark complete
 LESSONS_BASE=~/.config/coding-agent-lessons  # System lessons location
 PROJECT_DIR=/path/to/project                  # Project root
 LESSON_REMIND_EVERY=12                        # Reminder frequency (prompts)
+LESSONS_DEBUG=0|1|2|3                         # Debug logging level (see below)
 ```
+
+### Debug Logging
+
+Enable structured JSON logging to analyze system behavior:
+
+```bash
+# Enable info-level logging
+export LESSONS_DEBUG=1
+
+# Levels:
+#   0 = disabled (default)
+#   1 = info: session start, citations, lesson adds, decay, approach lifecycle
+#   2 = debug: includes injection details, token calculations
+#   3 = trace: includes file I/O timing, lock waits
+```
+
+Logs are written to `~/.config/coding-agent-lessons/debug.log` in JSON lines format:
+
+```bash
+# View in real-time
+tail -f ~/.config/coding-agent-lessons/debug.log | jq .
+
+# Filter by event type
+cat debug.log | jq 'select(.event == "citation")'
+
+# Analyze citation patterns
+cat debug.log | jq -r 'select(.event == "citation") | .lesson_id' | sort | uniq -c
+```
+
+Log files rotate automatically at 50MB (keeps 3 files).
 
 ### Claude Code Settings
 
@@ -258,12 +292,13 @@ When working with you, the agent will:
 ## Testing
 
 ```bash
-# Run all tests (201 tests)
+# Run all tests (223 tests)
 python3 -m pytest tests/ -v
 
 # Run specific test files
-python3 -m pytest tests/test_lessons_manager.py -v  # 62 tests
-python3 -m pytest tests/test_approaches.py -v       # 139 tests
+python3 -m pytest tests/test_lessons_manager.py -v  # Lesson tests
+python3 -m pytest tests/test_approaches.py -v       # Approach tests
+python3 -m pytest tests/test_debug_logger.py -v     # Debug logger tests
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.

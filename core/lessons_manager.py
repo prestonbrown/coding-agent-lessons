@@ -31,6 +31,12 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Union
 
+# Handle both module import and direct script execution
+try:
+    from core.debug_logger import get_logger
+except ImportError:
+    from debug_logger import get_logger
+
 
 # =============================================================================
 # Constants
@@ -555,6 +561,17 @@ class LessonsManager:
             with open(file_path, "a") as f:
                 f.write("\n" + formatted + "\n")
 
+        # Log lesson added
+        logger = get_logger()
+        logger.lesson_added(
+            lesson_id=lesson_id,
+            level=level,
+            category=category,
+            source=source,
+            title_length=len(title),
+            content_length=len(content),
+        )
+
         return lesson_id
 
     def add_ai_lesson(
@@ -632,6 +649,10 @@ class LessonsManager:
             if target is None:
                 raise ValueError(f"Lesson {lesson_id} not found")
 
+            # Capture old values for logging
+            uses_before = target.uses
+            velocity_before = target.velocity
+
             # Update metrics (cap uses at 100)
             new_uses = min(target.uses + 1, MAX_USES)
             new_velocity = target.velocity + 1
@@ -646,6 +667,17 @@ class LessonsManager:
 
         promotion_ready = (
             lesson_id.startswith("L") and new_uses >= SYSTEM_PROMOTION_THRESHOLD
+        )
+
+        # Log citation
+        logger = get_logger()
+        logger.citation(
+            lesson_id=lesson_id,
+            uses_before=uses_before,
+            uses_after=new_uses,
+            velocity_before=velocity_before,
+            velocity_after=new_velocity,
+            promotion_ready=promotion_ready,
         )
 
         return CitationResult(
@@ -842,6 +874,19 @@ class LessonsManager:
         system_count = len([l for l in all_lessons if l.level == "system"])
         project_count = len([l for l in all_lessons if l.level == "project"])
 
+        # Log session start
+        total_tokens = sum(l.tokens for l in all_lessons)
+        logger = get_logger()
+        logger.session_start(
+            project_root=str(self.project_root),
+            lessons_base=str(self.lessons_base),
+            total_lessons=len(all_lessons),
+            system_count=system_count,
+            project_count=project_count,
+            top_lessons=[{"id": l.id, "uses": l.uses} for l in top_lessons],
+            total_tokens=total_tokens,
+        )
+
         return InjectionResult(
             top_lessons=top_lessons,
             all_lessons=all_lessons,
@@ -922,6 +967,15 @@ class LessonsManager:
         lines.append("")
         lines.append("TIP: If asked about a topic, search all content: lessons list --search <term>")
 
+        # Log injection generation (level 2)
+        logger = get_logger()
+        logger.injection_generated(
+            token_budget=total_tokens,
+            lessons_included=len(result.top_lessons),
+            lessons_excluded=len(other_lessons),
+            included_ids=[l.id for l in result.top_lessons],
+        )
+
         return "\n".join(lines)
 
     def decay_lessons(self, stale_threshold_days: int = 30) -> DecayResult:
@@ -943,6 +997,15 @@ class LessonsManager:
 
         if recent_sessions == 0 and self._decay_state_file.exists():
             self._update_decay_timestamp()
+            # Log skipped decay
+            logger = get_logger()
+            logger.decay_result(
+                decayed_uses=0,
+                decayed_velocity=0,
+                sessions_since_last=0,
+                skipped=True,
+                lessons_affected=[],
+            )
             return DecayResult(
                 decayed_uses=0,
                 decayed_velocity=0,
@@ -983,6 +1046,16 @@ class LessonsManager:
                 self._write_lessons_file(file_path, lessons, level)
 
         self._update_decay_timestamp()
+
+        # Log decay result
+        logger = get_logger()
+        logger.decay_result(
+            decayed_uses=decayed_uses,
+            decayed_velocity=decayed_velocity,
+            sessions_since_last=recent_sessions,
+            skipped=False,
+            lessons_affected=[],  # Could track individual changes if needed
+        )
 
         return DecayResult(
             decayed_uses=decayed_uses,
@@ -1535,6 +1608,15 @@ class LessonsManager:
             approaches.append(approach)
             self._write_approaches_file(approaches)
 
+        # Log approach created
+        logger = get_logger()
+        logger.approach_created(
+            approach_id=approach_id,
+            title=title,
+            phase=phase,
+            agent=agent,
+        )
+
         return approach_id
 
     def approach_update_status(self, approach_id: str, status: str) -> None:
@@ -1551,12 +1633,14 @@ class LessonsManager:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
 
+        old_status = None
         with FileLock(self.project_approaches_file):
             approaches = self._parse_approaches_file(self.project_approaches_file)
 
             found = False
             for approach in approaches:
                 if approach.id == approach_id:
+                    old_status = approach.status
                     approach.status = status
                     approach.updated = date.today()
                     found = True
@@ -1566,6 +1650,15 @@ class LessonsManager:
                 raise ValueError(f"Approach {approach_id} not found")
 
             self._write_approaches_file(approaches)
+
+        # Log status change
+        logger = get_logger()
+        logger.approach_change(
+            approach_id=approach_id,
+            action="status_change",
+            old_value=old_status,
+            new_value=status,
+        )
 
     def approach_update_phase(self, approach_id: str, phase: str) -> None:
         """
@@ -1581,12 +1674,14 @@ class LessonsManager:
         if phase not in self.VALID_PHASES:
             raise ValueError(f"Invalid phase: {phase}")
 
+        old_phase = None
         with FileLock(self.project_approaches_file):
             approaches = self._parse_approaches_file(self.project_approaches_file)
 
             found = False
             for approach in approaches:
                 if approach.id == approach_id:
+                    old_phase = approach.phase
                     approach.phase = phase
                     approach.updated = date.today()
                     found = True
@@ -1596,6 +1691,15 @@ class LessonsManager:
                 raise ValueError(f"Approach {approach_id} not found")
 
             self._write_approaches_file(approaches)
+
+        # Log phase change
+        logger = get_logger()
+        logger.approach_change(
+            approach_id=approach_id,
+            action="phase_change",
+            old_value=old_phase,
+            new_value=phase,
+        )
 
     def approach_update_agent(self, approach_id: str, agent: str) -> None:
         """
@@ -1611,12 +1715,14 @@ class LessonsManager:
         if agent not in self.VALID_AGENTS:
             raise ValueError(f"Invalid agent: {agent}")
 
+        old_agent = None
         with FileLock(self.project_approaches_file):
             approaches = self._parse_approaches_file(self.project_approaches_file)
 
             found = False
             for approach in approaches:
                 if approach.id == approach_id:
+                    old_agent = approach.agent
                     approach.agent = agent
                     approach.updated = date.today()
                     found = True
@@ -1626,6 +1732,15 @@ class LessonsManager:
                 raise ValueError(f"Approach {approach_id} not found")
 
             self._write_approaches_file(approaches)
+
+        # Log agent change
+        logger = get_logger()
+        logger.approach_change(
+            approach_id=approach_id,
+            action="agent_change",
+            old_value=old_agent,
+            new_value=agent,
+        )
 
     def approach_add_code(
         self, approach_id: str, code: str, language: str = ""
@@ -1835,6 +1950,15 @@ Consider extracting lessons about:
 3. Patterns or gotchas discovered
 4. Decisions made and their rationale
 """
+
+        # Log approach completed
+        duration_days = (date.today() - target.created).days if target.created else None
+        logger = get_logger()
+        logger.approach_completed(
+            approach_id=approach_id,
+            tried_count=len(target.tried),
+            duration_days=duration_days,
+        )
 
         return ApproachCompleteResult(
             approach=target,
@@ -2204,6 +2328,17 @@ def main():
     add_ai_parser.add_argument("content", help="Lesson content")
     add_ai_parser.add_argument("--system", action="store_true", help="Add as system lesson")
 
+    # add-system command (alias for add --system, for backward compatibility)
+    add_system_parser = subparsers.add_parser(
+        "add-system", help="Add a system lesson (alias for add --system)"
+    )
+    add_system_parser.add_argument("category", help="Lesson category")
+    add_system_parser.add_argument("title", help="Lesson title")
+    add_system_parser.add_argument("content", help="Lesson content")
+    add_system_parser.add_argument(
+        "--force", action="store_true", help="Skip duplicate check"
+    )
+
     # cite command
     cite_parser = subparsers.add_parser("cite", help="Cite a lesson")
     cite_parser.add_argument("lesson_id", help="Lesson ID (e.g., L001)")
@@ -2334,6 +2469,17 @@ def main():
                 content=args.content,
             )
             print(f"Added AI {level} lesson {lesson_id}: {args.title}")
+
+        elif args.command == "add-system":
+            # Alias for add --system (backward compatibility with bash script)
+            lesson_id = manager.add_lesson(
+                level="system",
+                category=args.category,
+                title=args.title,
+                content=args.content,
+                force=args.force,
+            )
+            print(f"Added system lesson {lesson_id}: {args.title}")
 
         elif args.command == "cite":
             result = manager.cite_lesson(args.lesson_id)

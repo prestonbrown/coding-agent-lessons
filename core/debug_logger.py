@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Debug logging for lessons manager.
+
+Outputs JSON lines format to ~/.config/coding-agent-lessons/debug.log
+when LESSONS_DEBUG is set.
+
+Levels:
+  0 or unset: disabled
+  1: info - high-level operations (session start, cite, decay)
+  2: debug - includes intermediate steps (injection details)
+  3: trace - includes file I/O timing, lock waits
+"""
+
+import json
+import os
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from functools import wraps
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+# Configuration
+DEBUG_ENV_VAR = "LESSONS_DEBUG"
+LOG_FILE_NAME = "debug.log"
+MAX_LOG_SIZE_MB = 50
+MAX_LOG_FILES = 3  # Keep debug.log, debug.log.1, debug.log.2
+
+# Session ID - generated once per process
+_SESSION_ID: Optional[str] = None
+
+
+def _get_session_id() -> str:
+    """Get or create a session ID for correlating events."""
+    global _SESSION_ID
+    if _SESSION_ID is None:
+        _SESSION_ID = uuid.uuid4().hex[:12]
+    return _SESSION_ID
+
+
+def _get_debug_level() -> int:
+    """Get the configured debug level from environment."""
+    level = os.environ.get(DEBUG_ENV_VAR, "0")
+    try:
+        return int(level)
+    except ValueError:
+        # Treat any non-numeric truthy value as level 1
+        return 1 if level.lower() in ("true", "yes", "on") else 0
+
+
+def _get_log_path() -> Path:
+    """Get the log file path."""
+    lessons_base = Path(
+        os.environ.get("LESSONS_BASE", Path.home() / ".config" / "coding-agent-lessons")
+    )
+    return lessons_base / LOG_FILE_NAME
+
+
+def _rotate_if_needed(log_path: Path) -> None:
+    """Rotate log file if it exceeds size limit."""
+    if not log_path.exists():
+        return
+
+    size_mb = log_path.stat().st_size / (1024 * 1024)
+    if size_mb < MAX_LOG_SIZE_MB:
+        return
+
+    # Rotate: debug.log.2 -> delete, debug.log.1 -> .2, debug.log -> .1
+    for i in range(MAX_LOG_FILES - 1, 0, -1):
+        old_path = log_path.parent / f"{LOG_FILE_NAME}.{i}"
+        new_path = log_path.parent / f"{LOG_FILE_NAME}.{i + 1}"
+        if old_path.exists():
+            if i == MAX_LOG_FILES - 1:
+                old_path.unlink()
+            else:
+                old_path.rename(new_path)
+
+    # Rotate current to .1
+    backup_path = log_path.parent / f"{LOG_FILE_NAME}.1"
+    log_path.rename(backup_path)
+
+
+class DebugLogger:
+    """
+    JSON lines debug logger for lessons manager.
+
+    All methods are no-ops when LESSONS_DEBUG is 0 or unset.
+    """
+
+    def __init__(self) -> None:
+        self._level = _get_debug_level()
+        self._log_path = _get_log_path() if self._level > 0 else None
+
+    @property
+    def enabled(self) -> bool:
+        return self._level > 0
+
+    @property
+    def level(self) -> int:
+        return self._level
+
+    def _write(self, event: Dict[str, Any]) -> None:
+        """Write an event to the log file."""
+        if not self.enabled or self._log_path is None:
+            return
+
+        # Add common fields
+        event["timestamp"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        event["session_id"] = _get_session_id()
+        event["pid"] = os.getpid()
+
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            _rotate_if_needed(self._log_path)
+
+            with open(self._log_path, "a") as f:
+                f.write(json.dumps(event, default=str) + "\n")
+        except Exception:
+            # Never let logging errors affect main operation
+            pass
+
+    # =========================================================================
+    # Level 1: Info events
+    # =========================================================================
+
+    def session_start(
+        self,
+        project_root: str,
+        lessons_base: str,
+        total_lessons: int,
+        system_count: int,
+        project_count: int,
+        top_lessons: List[Dict[str, Any]],
+        total_tokens: int,
+    ) -> None:
+        """Log session start with loaded lessons summary."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "session_start",
+                "level": "info",
+                "project_root": project_root,
+                "lessons_base": lessons_base,
+                "total_lessons": total_lessons,
+                "system_count": system_count,
+                "project_count": project_count,
+                "top_lessons": top_lessons[:10],  # Limit array size
+                "total_tokens": total_tokens,
+            }
+        )
+
+    def citation(
+        self,
+        lesson_id: str,
+        uses_before: int,
+        uses_after: int,
+        velocity_before: float,
+        velocity_after: float,
+        promotion_ready: bool,
+    ) -> None:
+        """Log a lesson citation."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "citation",
+                "level": "info",
+                "lesson_id": lesson_id,
+                "uses_before": uses_before,
+                "uses_after": uses_after,
+                "velocity_before": velocity_before,
+                "velocity_after": velocity_after,
+                "promotion_ready": promotion_ready,
+            }
+        )
+
+    def lesson_added(
+        self,
+        lesson_id: str,
+        level: str,
+        category: str,
+        source: str,
+        title_length: int,
+        content_length: int,
+    ) -> None:
+        """Log new lesson creation."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "lesson_added",
+                "level": "info",
+                "lesson_id": lesson_id,
+                "lesson_level": level,
+                "category": category,
+                "source": source,
+                "title_length": title_length,
+                "content_length": content_length,
+            }
+        )
+
+    def decay_result(
+        self,
+        decayed_uses: int,
+        decayed_velocity: int,
+        sessions_since_last: int,
+        skipped: bool,
+        lessons_affected: List[Dict[str, Any]],
+    ) -> None:
+        """Log decay operation results."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "decay_result",
+                "level": "info",
+                "decayed_uses": decayed_uses,
+                "decayed_velocity": decayed_velocity,
+                "sessions_since_last": sessions_since_last,
+                "skipped": skipped,
+                "lessons_affected": lessons_affected[:20],  # Limit array size
+            }
+        )
+
+    def approach_created(
+        self,
+        approach_id: str,
+        title: str,
+        phase: str,
+        agent: str,
+    ) -> None:
+        """Log new approach creation."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "approach_created",
+                "level": "info",
+                "approach_id": approach_id,
+                "title": title,
+                "phase": phase,
+                "agent": agent,
+            }
+        )
+
+    def approach_change(
+        self,
+        approach_id: str,
+        action: str,  # status_change, phase_change, agent_change, tried_added
+        old_value: Optional[str] = None,
+        new_value: Optional[str] = None,
+    ) -> None:
+        """Log approach state changes."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "approach_change",
+                "level": "info",
+                "approach_id": approach_id,
+                "action": action,
+                "old_value": old_value,
+                "new_value": new_value,
+            }
+        )
+
+    def approach_completed(
+        self,
+        approach_id: str,
+        tried_count: int,
+        duration_days: Optional[int] = None,
+    ) -> None:
+        """Log approach completion."""
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "approach_completed",
+                "level": "info",
+                "approach_id": approach_id,
+                "tried_count": tried_count,
+                "duration_days": duration_days,
+            }
+        )
+
+    # =========================================================================
+    # Level 2: Debug events
+    # =========================================================================
+
+    def injection_generated(
+        self,
+        token_budget: int,
+        lessons_included: int,
+        lessons_excluded: int,
+        included_ids: List[str],
+    ) -> None:
+        """Log injection generation details."""
+        if self._level < 2:
+            return
+        self._write(
+            {
+                "event": "injection_generated",
+                "level": "debug",
+                "token_budget": token_budget,
+                "lessons_included": lessons_included,
+                "lessons_excluded": lessons_excluded,
+                "included_ids": included_ids[:20],
+            }
+        )
+
+    # =========================================================================
+    # Level 3: Trace events
+    # =========================================================================
+
+    @contextmanager
+    def trace_file_io(self, operation: str, file_path: str):
+        """Context manager to trace file I/O timing."""
+        if self._level < 3:
+            yield
+            return
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            duration_ms = (time.perf_counter() - start) * 1000
+            self._write(
+                {
+                    "event": "file_io",
+                    "level": "trace",
+                    "operation": operation,  # read, write, parse
+                    "file_path": str(file_path),
+                    "duration_ms": round(duration_ms, 2),
+                }
+            )
+
+    @contextmanager
+    def trace_lock(self, file_path: str):
+        """Context manager to trace lock acquisition timing."""
+        if self._level < 3:
+            yield
+            return
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            wait_ms = (time.perf_counter() - start) * 1000
+            self._write(
+                {
+                    "event": "lock_acquired",
+                    "level": "trace",
+                    "file_path": str(file_path),
+                    "wait_ms": round(wait_ms, 2),
+                }
+            )
+
+
+# Global singleton
+_logger: Optional[DebugLogger] = None
+
+
+def get_logger() -> DebugLogger:
+    """Get the global debug logger instance."""
+    global _logger
+    if _logger is None:
+        _logger = DebugLogger()
+    return _logger
+
+
+def reset_logger() -> None:
+    """Reset the global logger (for testing)."""
+    global _logger
+    _logger = None
+
+
+# Convenience decorator for tracing function calls
+def trace_call(func):
+    """Decorator to trace function entry/exit at level 3."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        logger = get_logger()
+        if logger.level < 3:
+            return func(*args, **kwargs)
+
+        start = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            return result
+        finally:
+            duration_ms = (time.perf_counter() - start) * 1000
+            logger._write(
+                {
+                    "event": "function_call",
+                    "level": "trace",
+                    "function": func.__name__,
+                    "duration_ms": round(duration_ms, 2),
+                }
+            )
+
+    return wrapper
