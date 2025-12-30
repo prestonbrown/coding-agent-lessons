@@ -44,18 +44,19 @@ run_decay_if_due() {
 }
 
 # Generate lessons context using Python manager (with bash fallback)
+# Note: Reduced to 3 lessons since smart-inject-hook.sh adds query-relevant ones
 generate_context() {
     local cwd="$1"
     local summary=""
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 5 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 3 2>/dev/null || true)
     fi
 
     # Fall back to bash manager if Python fails or returns empty
     if [[ -z "$summary" && -x "$BASH_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" inject 5 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" inject 3 2>/dev/null || true)
     fi
 
     echo "$summary"

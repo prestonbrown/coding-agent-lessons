@@ -24,6 +24,7 @@ import fcntl
 import math
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -54,6 +55,10 @@ VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
 # Approach visibility constants
 APPROACH_MAX_COMPLETED = 3  # Keep last N completed approaches visible
 APPROACH_MAX_AGE_DAYS = 7  # Or completed within N days
+
+# Relevance scoring constants
+SCORE_RELEVANCE_TIMEOUT = 30  # Default timeout for Haiku call
+SCORE_RELEVANCE_MAX_QUERY_LEN = 5000  # Truncate query to prevent huge prompts
 
 
 # =============================================================================
@@ -254,6 +259,46 @@ class ApproachCompleteResult:
     """Result of completing an approach."""
     approach: Approach
     extraction_prompt: str
+
+
+@dataclass
+class ScoredLesson:
+    """A lesson with a relevance score."""
+    lesson: Lesson
+    score: int  # 0-10 relevance score
+
+
+@dataclass
+class RelevanceResult:
+    """Result of relevance scoring."""
+    scored_lessons: List[ScoredLesson]
+    query_text: str
+    error: Optional[str] = None
+
+    def format(self, top_n: int = 10, min_score: int = 0) -> str:
+        """Format scored lessons for display.
+
+        Args:
+            top_n: Maximum number of lessons to show
+            min_score: Minimum relevance score to include (0-10)
+        """
+        if self.error:
+            return f"Error: {self.error}"
+        if not self.scored_lessons:
+            return "(no lessons to score)"
+
+        # Filter by min_score, then take top_n
+        filtered = [sl for sl in self.scored_lessons if sl.score >= min_score]
+        if not filtered:
+            return f"(no lessons with relevance >= {min_score})"
+
+        lines = []
+        for sl in filtered[:top_n]:
+            rating = LessonRating.calculate(sl.lesson.uses, sl.lesson.velocity)
+            prefix = f"{ROBOT_EMOJI} " if sl.lesson.source == "ai" else ""
+            lines.append(f"[{sl.lesson.id}] {rating} (relevance: {sl.score}/10) {prefix}{sl.lesson.title}")
+            lines.append(f"    -> {sl.lesson.content}")
+        return "\n".join(lines)
 
 
 # =============================================================================
@@ -912,6 +957,121 @@ class LessonsManager:
             system_count=system_count,
             project_count=project_count,
         )
+
+    def score_relevance(
+        self, query_text: str, timeout_seconds: int = SCORE_RELEVANCE_TIMEOUT
+    ) -> RelevanceResult:
+        """
+        Score all lessons by relevance to query text using Haiku.
+
+        Calls `claude -p --model haiku` to evaluate which lessons are most
+        relevant to the given text (typically the user's first message).
+
+        Args:
+            query_text: Text to score lessons against (e.g., user's question)
+            timeout_seconds: Timeout for the Haiku call
+
+        Returns:
+            RelevanceResult with lessons sorted by relevance score (descending)
+        """
+        # Truncate query to prevent huge prompts
+        if len(query_text) > SCORE_RELEVANCE_MAX_QUERY_LEN:
+            query_text = query_text[:SCORE_RELEVANCE_MAX_QUERY_LEN] + "..."
+
+        all_lessons = self.list_lessons(scope="all")
+
+        if not all_lessons:
+            return RelevanceResult(
+                scored_lessons=[],
+                query_text=query_text,
+            )
+
+        # Build the prompt for Haiku
+        lessons_text = "\n".join(
+            f"[{lesson.id}] {lesson.title}: {lesson.content}"
+            for lesson in all_lessons
+        )
+
+        prompt = f"""Score each lesson's relevance (0-10) to this query. 10 = highly relevant, 0 = not relevant.
+
+Query: {query_text}
+
+Lessons:
+{lessons_text}
+
+Output ONLY lines in format: ID: SCORE
+Example:
+L001: 8
+S002: 3
+
+No explanations, just ID: SCORE lines."""
+
+        try:
+            # Call Haiku via claude CLI
+            result = subprocess.run(
+                ["claude", "-p", "--model", "haiku"],
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+
+            if result.returncode != 0:
+                return RelevanceResult(
+                    scored_lessons=[],
+                    query_text=query_text,
+                    error=f"claude command failed: {result.stderr.strip()}",
+                )
+
+            output = result.stdout.strip()
+            if not output:
+                return RelevanceResult(
+                    scored_lessons=[],
+                    query_text=query_text,
+                    error="empty response from Haiku",
+                )
+
+            # Parse the output: ID: SCORE
+            lesson_map = {l.id: l for l in all_lessons}
+            scored_lessons = []
+            score_pattern = re.compile(r"^\[?([LS]\d{3})\]?:\s*(\d+)")
+
+            for line in output.splitlines():
+                match = score_pattern.match(line.strip())
+                if match:
+                    lesson_id = match.group(1)
+                    score = min(10, max(0, int(match.group(2))))
+                    if lesson_id in lesson_map:
+                        scored_lessons.append(
+                            ScoredLesson(lesson=lesson_map[lesson_id], score=score)
+                        )
+
+            # Sort by score descending, then by uses descending
+            scored_lessons.sort(key=lambda sl: (-sl.score, -sl.lesson.uses))
+
+            return RelevanceResult(
+                scored_lessons=scored_lessons,
+                query_text=query_text,
+            )
+
+        except subprocess.TimeoutExpired:
+            return RelevanceResult(
+                scored_lessons=[],
+                query_text=query_text,
+                error=f"Haiku call timed out after {timeout_seconds}s",
+            )
+        except FileNotFoundError:
+            return RelevanceResult(
+                scored_lessons=[],
+                query_text=query_text,
+                error="claude CLI not found",
+            )
+        except Exception as e:
+            return RelevanceResult(
+                scored_lessons=[],
+                query_text=query_text,
+                error=str(e),
+            )
 
     def get_total_tokens(self, scope: str = "all") -> int:
         """
@@ -2468,6 +2628,21 @@ def main():
     promote_parser = subparsers.add_parser("promote", help="Promote project lesson to system")
     promote_parser.add_argument("lesson_id", help="Lesson ID")
 
+    # score-relevance command
+    score_relevance_parser = subparsers.add_parser(
+        "score-relevance", help="Score lessons by relevance to text using Haiku"
+    )
+    score_relevance_parser.add_argument("text", help="Text to score lessons against")
+    score_relevance_parser.add_argument(
+        "--top", type=int, default=10, help="Number of top results to show"
+    )
+    score_relevance_parser.add_argument(
+        "--min-score", type=int, default=0, help="Minimum relevance score (0-10)"
+    )
+    score_relevance_parser.add_argument(
+        "--timeout", type=int, default=30, help="Timeout in seconds for Haiku call"
+    )
+
     # approach command (with subcommands)
     approach_parser = subparsers.add_parser("approach", help="Manage approaches")
     approach_subparsers = approach_parser.add_subparsers(dest="approach_command", help="Approach commands")
@@ -2635,6 +2810,10 @@ def main():
         elif args.command == "promote":
             new_id = manager.promote_lesson(args.lesson_id)
             print(f"Promoted {args.lesson_id} -> {new_id}")
+
+        elif args.command == "score-relevance":
+            result = manager.score_relevance(args.text, timeout_seconds=args.timeout)
+            print(result.format(top_n=args.top, min_score=args.min_score))
 
         elif args.command == "approach":
             if not args.approach_command:

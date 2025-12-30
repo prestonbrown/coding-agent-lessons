@@ -1192,5 +1192,352 @@ class TestCaptureHook:
         assert lesson.promotable is True
 
 
+class TestScoreRelevance:
+    """Tests for relevance scoring with Haiku."""
+
+    def test_score_relevance_returns_result(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """score_relevance returns a RelevanceResult."""
+        from core.lessons_manager import LessonsManager, RelevanceResult
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
+        manager.add_lesson("project", "gotcha", "Python Imports", "Use absolute imports")
+
+        # Mock subprocess to return scored output
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 8\nL002: 3\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("How do I use git?")
+        assert isinstance(result, RelevanceResult)
+        assert result.error is None
+        assert len(result.scored_lessons) == 2
+
+    def test_score_relevance_sorts_by_score(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Results are sorted by score descending."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "A lesson", "Content A")
+        manager.add_lesson("project", "pattern", "B lesson", "Content B")
+        manager.add_lesson("project", "pattern", "C lesson", "Content C")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 3\nL002: 9\nL003: 5\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test query")
+        scores = [sl.score for sl in result.scored_lessons]
+        assert scores == [9, 5, 3]  # Sorted descending
+
+    def test_score_relevance_empty_lessons(self, temp_lessons_base: Path, temp_project_root: Path):
+        """score_relevance with no lessons returns empty result."""
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        result = manager.score_relevance("test query")
+        assert result.scored_lessons == []
+        assert result.error is None
+
+    def test_score_relevance_handles_timeout(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """score_relevance handles timeout gracefully."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Test content")
+
+        def mock_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired("claude", 30)
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test query", timeout_seconds=30)
+        assert result.error is not None
+        assert "timed out" in result.error
+
+    def test_score_relevance_handles_missing_claude(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """score_relevance handles missing claude CLI."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Test content")
+
+        def mock_run(*args, **kwargs):
+            raise FileNotFoundError("claude not found")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test query")
+        assert result.error is not None
+        assert "not found" in result.error
+
+    def test_score_relevance_handles_command_failure(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """score_relevance handles non-zero return code."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Test content")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 1
+                stdout = ""
+                stderr = "API error"
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test query")
+        assert result.error is not None
+        assert "failed" in result.error
+
+    def test_score_relevance_clamps_scores(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Scores are clamped to 0-10 range."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Test content")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 15\n"  # Invalid score > 10
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test query")
+        assert len(result.scored_lessons) == 1
+        assert result.scored_lessons[0].score == 10  # Clamped to max
+
+    def test_score_relevance_format_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """RelevanceResult.format() produces readable output."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 8\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("git question")
+        output = result.format()
+        assert "[L001]" in output
+        assert "relevance: 8/10" in output
+        assert "Git Safety" in output
+
+    def test_score_relevance_handles_brackets_in_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Parser handles optional brackets in Haiku output."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "[L001]: 7\n"  # With brackets
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        assert len(result.scored_lessons) == 1
+        assert result.scored_lessons[0].score == 7
+
+    def test_score_relevance_partial_results(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Handles when Haiku returns fewer lessons than expected."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Lesson A", "Content A")
+        manager.add_lesson("project", "pattern", "Lesson B", "Content B")
+        manager.add_lesson("project", "pattern", "Lesson C", "Content C")
+
+        # Haiku only returns 2 of 3 lessons
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 8\nL003: 5\n"  # Missing L002
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        assert result.error is None
+        assert len(result.scored_lessons) == 2
+        ids = [sl.lesson.id for sl in result.scored_lessons]
+        assert "L001" in ids
+        assert "L003" in ids
+        assert "L002" not in ids
+
+    def test_score_relevance_secondary_sort_by_uses(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """When scores are equal, sorts by uses descending."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Low uses", "Content A")
+        manager.add_lesson("project", "pattern", "High uses", "Content B")
+        # Cite L002 multiple times to increase uses
+        for _ in range(5):
+            manager.cite_lesson("L002")
+
+        # Same score for both
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 7\nL002: 7\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        assert len(result.scored_lessons) == 2
+        # L002 should come first due to higher uses
+        assert result.scored_lessons[0].lesson.id == "L002"
+        assert result.scored_lessons[1].lesson.id == "L001"
+
+    def test_score_relevance_system_lessons(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Both project (L###) and system (S###) lessons are scored."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Project lesson", "Project content")
+        manager.add_lesson("system", "pattern", "System lesson", "System content")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 6\nS001: 9\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        assert len(result.scored_lessons) == 2
+        # S001 should be first (higher score)
+        assert result.scored_lessons[0].lesson.id == "S001"
+        assert result.scored_lessons[0].score == 9
+        assert result.scored_lessons[1].lesson.id == "L001"
+        assert result.scored_lessons[1].score == 6
+
+    def test_score_relevance_min_score_filter(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """format() with min_score filters out low-relevance lessons."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "High relevance", "Content A")
+        manager.add_lesson("project", "pattern", "Low relevance", "Content B")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 8\nL002: 2\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        output = result.format(min_score=5)
+        assert "[L001]" in output
+        assert "[L002]" not in output
+        assert "relevance: 8/10" in output
+
+    def test_score_relevance_min_score_no_matches(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """format() with high min_score and no matches returns message."""
+        from core.lessons_manager import LessonsManager
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Low relevance", "Content")
+
+        def mock_run(*args, **kwargs):
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 3\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("test")
+        output = result.format(min_score=8)
+        assert "no lessons with relevance >= 8" in output
+
+    def test_score_relevance_query_truncation(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
+        """Long queries are truncated to prevent huge prompts."""
+        from core.lessons_manager import LessonsManager, SCORE_RELEVANCE_MAX_QUERY_LEN
+        import subprocess
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        captured_prompt = []
+
+        def mock_run(*args, **kwargs):
+            captured_prompt.append(kwargs.get("input", ""))
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 5\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # Create a very long query
+        long_query = "x" * (SCORE_RELEVANCE_MAX_QUERY_LEN + 1000)
+        result = manager.score_relevance(long_query)
+
+        assert result.error is None
+        # Check that the prompt was truncated
+        assert len(captured_prompt[0]) < len(long_query) + 500  # Some buffer for prompt template
+
+
+# Helper for creating mock subprocess results (used in TestScoreRelevance)
+def make_mock_result(stdout: str = "", returncode: int = 0, stderr: str = ""):
+    """Create a mock subprocess result for testing."""
+    class MockResult:
+        pass
+    result = MockResult()
+    result.stdout = stdout
+    result.returncode = returncode
+    result.stderr = stderr
+    return result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

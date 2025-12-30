@@ -8,6 +8,7 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
 ### Lessons System
 - **Two-tier architecture**: Project lessons (`[L###]`) and system lessons (`[S###]`)
+- **Smart injection**: First prompt triggers Haiku-based relevance scoring for context-aware lessons
 - **Dual-dimension rating**: `[uses|velocity]` shows both total usage and recent activity
 - **Automatic promotion**: 50+ uses promotes project lessons to system level
 - **Velocity decay**: Lessons lose momentum when not used, stay relevant
@@ -91,10 +92,11 @@ Use the `/lessons` slash command:
 
 ### Lessons Lifecycle
 
-1. **Session Start**: Top lessons injected as context with token count
-2. **Citation**: Agent cites `[L001]` when applying → uses/velocity increase
-3. **Decay**: Weekly decay reduces velocity; stale lessons lose uses
-4. **Promotion**: 50+ uses → project lesson promotes to system level
+1. **Session Start**: Top 3 lessons by stars + approaches injected as context
+2. **First Prompt**: Smart injection scores all lessons against query via Haiku, injects most relevant
+3. **Citation**: Agent cites `[L001]` when applying → uses/velocity increase
+4. **Decay**: Weekly decay reduces velocity; stale lessons lose uses
+5. **Promotion**: 50+ uses → project lesson promotes to system level
 
 ### Rating System
 
@@ -150,7 +152,8 @@ coding-agent-lessons/
 │   └── lessons-manager.sh      # Bash wrapper (calls Python)
 ├── adapters/
 │   ├── claude-code/
-│   │   ├── inject-hook.sh      # SessionStart - injects context
+│   │   ├── inject-hook.sh      # SessionStart - injects top lessons + approaches
+│   │   ├── smart-inject-hook.sh # UserPromptSubmit - relevance-scored lessons
 │   │   └── stop-hook.sh        # Stop - tracks citations/patterns
 │   └── opencode/
 │       └── ...
@@ -178,7 +181,8 @@ python3 core/lessons_manager.py edit L005 "New content"
 python3 core/lessons_manager.py delete L003
 python3 core/lessons_manager.py list [--scope project|system] [--category X]
 python3 core/lessons_manager.py search "keyword"
-python3 core/lessons_manager.py inject 5  # Top 5 for context
+python3 core/lessons_manager.py inject 5  # Top 5 by stars for context
+python3 core/lessons_manager.py score-relevance "query" --top 5  # Top 5 by relevance
 python3 core/lessons_manager.py decay 30  # Decay lessons unused 30+ days
 
 # Approaches
@@ -270,12 +274,14 @@ In `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "SessionStart": [{"command": "path/to/inject-hook.sh"}],
-    "Stop": [{"command": "path/to/stop-hook.sh"}]
+    "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
+    "UserPromptSubmit": [{"hooks": [
+      {"type": "command", "command": "bash ~/.claude/hooks/capture-hook.sh"},
+      {"type": "command", "command": "bash ~/.claude/hooks/smart-inject-hook.sh", "timeout": 15000}
+    ]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/stop-hook.sh"}]}]
   },
-  "lessonsSystem": {
-    "enabled": true
-  }
+  "lessonsSystem": {"enabled": true}
 }
 ```
 
@@ -292,7 +298,7 @@ When working with you, the agent will:
 ## Testing
 
 ```bash
-# Run all tests (223 tests)
+# Run all tests (269 tests)
 python3 -m pytest tests/ -v
 
 # Run specific test files
