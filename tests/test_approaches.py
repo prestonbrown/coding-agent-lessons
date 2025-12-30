@@ -2054,5 +2054,203 @@ class TestPhaseDetectionEdgeCases:
         assert detect_phase_from_tools(tools) == "research"
 
 
+# =============================================================================
+# Shell Hook Tests for LAST Reference
+# =============================================================================
+
+
+class TestStopHookLastReference:
+    """Tests for stop-hook.sh LAST reference in approach commands."""
+
+    @pytest.fixture
+    def temp_dirs(self, tmp_path: Path):
+        """Create temp directories for testing."""
+        lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+        project_root = tmp_path / "project"
+        lessons_base.mkdir(parents=True)
+        project_root.mkdir(parents=True)
+        return lessons_base, project_root
+
+    def create_mock_transcript(self, project_root: Path, messages: list) -> Path:
+        """Create a mock transcript file with the given assistant messages."""
+        import json
+        from datetime import datetime
+
+        transcript = project_root / "transcript.jsonl"
+        with open(transcript, "w") as f:
+            for i, msg in enumerate(messages):
+                entry = {
+                    "type": "assistant",
+                    "timestamp": f"2025-12-30T{10+i:02d}:00:00.000Z",
+                    "message": {
+                        "content": [{"type": "text", "text": msg}]
+                    }
+                }
+                f.write(json.dumps(entry) + "\n")
+        return transcript
+
+    def test_last_reference_phase_update(self, temp_dirs):
+        """APPROACH UPDATE LAST: phase should update the most recent approach."""
+        lessons_base, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        transcript = self.create_mock_transcript(project_root, [
+            "APPROACH: Test feature",
+            "APPROACH UPDATE LAST: phase implementing",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(lessons_base),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+        approach = manager.approach_get("A001")
+        assert approach is not None
+        assert approach.phase == "implementing"
+
+    def test_last_reference_tried_update(self, temp_dirs):
+        """APPROACH UPDATE LAST: tried should update the most recent approach."""
+        lessons_base, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        transcript = self.create_mock_transcript(project_root, [
+            "APPROACH: Another feature",
+            "APPROACH UPDATE LAST: tried success - it worked great",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(lessons_base),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+        approach = manager.approach_get("A001")
+        assert approach is not None
+        assert len(approach.tried) == 1
+        assert approach.tried[0].outcome == "success"
+        assert "worked great" in approach.tried[0].description
+
+    def test_last_reference_complete(self, temp_dirs):
+        """APPROACH COMPLETE LAST should complete the most recent approach."""
+        lessons_base, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        transcript = self.create_mock_transcript(project_root, [
+            "APPROACH: Complete me",
+            "APPROACH COMPLETE LAST",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(lessons_base),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+        approach = manager.approach_get("A001")
+        assert approach is not None
+        assert approach.status == "completed"
+
+    def test_last_tracks_across_multiple_creates(self, temp_dirs):
+        """LAST should track the most recently created approach."""
+        lessons_base, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        transcript = self.create_mock_transcript(project_root, [
+            "APPROACH: First approach",
+            "APPROACH: Second approach",
+            "APPROACH UPDATE LAST: phase implementing",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(lessons_base),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        from core.lessons_manager import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+
+        # A001 (First) should still be research (not updated)
+        a001 = manager.approach_get("A001")
+        assert a001 is not None
+        assert a001.phase == "research"
+
+        # A002 (Second) should be implementing (LAST referred to it)
+        a002 = manager.approach_get("A002")
+        assert a002 is not None
+        assert a002.phase == "implementing"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

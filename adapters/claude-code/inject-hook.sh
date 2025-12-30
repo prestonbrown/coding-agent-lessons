@@ -100,13 +100,13 @@ APPROACH TRACKING: Use APPROACH instead of TodoWrite for multi-step work.
   UPDATE as you work: record what you tried (success/fail/partial), update phase and next steps.
   COMPLETE when done: review for lessons to extract.
 
-  Commands:
-    APPROACH: <title>                              - Start new approach
-    PLAN MODE: <title>                             - Start approach in plan mode
-    APPROACH UPDATE A###: tried <outcome> - <desc> - Record attempt (success|fail|partial)
-    APPROACH UPDATE A###: phase <phase>            - Update phase (research|planning|implementing|review)
-    APPROACH UPDATE A###: next <text>              - Set next steps
-    APPROACH COMPLETE A###                         - Mark complete, review for lessons"
+  Commands (use LAST for most recent, or A### for specific approach):
+    APPROACH: <title>                               - Start new approach
+    PLAN MODE: <title>                              - Start approach in plan mode
+    APPROACH UPDATE LAST: phase <phase>             - Update phase (research|planning|implementing|review)
+    APPROACH UPDATE LAST: tried <outcome> - <desc>  - Record attempt (success|fail|partial)
+    APPROACH UPDATE LAST: next <text>               - Set next steps
+    APPROACH COMPLETE LAST                          - Mark complete, review for lessons"
 
         local escaped=$(printf '%s' "$summary" | jq -Rs .)
         cat << EOF

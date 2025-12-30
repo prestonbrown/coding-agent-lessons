@@ -182,20 +182,22 @@ process_ai_lessons() {
 }
 
 # Detect and process APPROACH patterns in assistant messages
+# ID can be explicit (A###) or LAST (most recently created in this processing run)
 # Patterns:
-#   APPROACH: <title>                                -> approach add "<title>"
-#   PLAN MODE: <title>                               -> approach add "<title>" --phase research --agent plan
-#   APPROACH UPDATE A###: status <status>            -> approach update A### --status <status>
-#   APPROACH UPDATE A###: phase <phase>              -> approach update A### --phase <phase>
-#   APPROACH UPDATE A###: agent <agent>              -> approach update A### --agent <agent>
-#   APPROACH UPDATE A###: tried <outcome> - <desc>   -> approach update A### --tried <outcome> "<desc>"
-#   APPROACH UPDATE A###: next <text>                -> approach update A### --next "<text>"
-#   APPROACH COMPLETE A###                           -> approach complete A###
+#   APPROACH: <title>                                     -> approach add "<title>"
+#   PLAN MODE: <title>                                    -> approach add "<title>" --phase research --agent plan
+#   APPROACH UPDATE A###|LAST: status <status>            -> approach update ID --status <status>
+#   APPROACH UPDATE A###|LAST: phase <phase>              -> approach update ID --phase <phase>
+#   APPROACH UPDATE A###|LAST: agent <agent>              -> approach update ID --agent <agent>
+#   APPROACH UPDATE A###|LAST: tried <outcome> - <desc>   -> approach update ID --tried <outcome> "<desc>"
+#   APPROACH UPDATE A###|LAST: next <text>                -> approach update ID --next "<text>"
+#   APPROACH COMPLETE A###|LAST                           -> approach complete ID
 process_approaches() {
     local transcript_path="$1"
     local project_root="$2"
     local last_timestamp="$3"
     local processed_count=0
+    local last_approach_id=""  # Track last created approach for LAST reference
 
     # Extract approach patterns from assistant messages
     # Also match PLAN MODE: pattern for plan mode integration
@@ -229,6 +231,10 @@ process_approaches() {
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
+                # Extract created ID for LAST reference (e.g., "Added approach A001: ...")
+                if [[ "$result" =~ Added\ approach\ ([A-Z][0-9]{3}) ]]; then
+                    last_approach_id="${BASH_REMATCH[1]}"
+                fi
             fi
 
         # Pattern 1b: PLAN MODE: <title> -> add approach with plan mode defaults
@@ -240,13 +246,18 @@ process_approaches() {
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
+                # Extract created ID for LAST reference
+                if [[ "$result" =~ Added\ approach\ ([A-Z][0-9]{3}) ]]; then
+                    last_approach_id="${BASH_REMATCH[1]}"
+                fi
             fi
 
-        # Pattern 2: APPROACH UPDATE A###: status <status>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ status\ (.+)$ ]]; then
+        # Pattern 2: APPROACH UPDATE A###|LAST: status <status>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
             local status="${BASH_REMATCH[2]}"
-            # Status is validated by Python, just basic sanitize
             status=$(sanitize_input "$status" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -254,9 +265,11 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
             fi
 
-        # Pattern 2b: APPROACH UPDATE A###: phase <phase>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ phase\ (.+)$ ]]; then
+        # Pattern 2b: APPROACH UPDATE A###|LAST: phase <phase>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
             local phase="${BASH_REMATCH[2]}"
             phase=$(sanitize_input "$phase" 20)
 
@@ -265,9 +278,11 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --phase "$phase" 2>&1 || true)
             fi
 
-        # Pattern 2c: APPROACH UPDATE A###: agent <agent>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ agent\ (.+)$ ]]; then
+        # Pattern 2c: APPROACH UPDATE A###|LAST: agent <agent>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
             local agent="${BASH_REMATCH[2]}"
             agent=$(sanitize_input "$agent" 30)
 
@@ -276,21 +291,27 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
             fi
 
-        # Pattern 3: APPROACH UPDATE A###: tried <outcome> - <description>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
+        # Pattern 3: APPROACH UPDATE A###|LAST: tried <outcome> - <description>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             local outcome="${BASH_REMATCH[2]}"
             local description="${BASH_REMATCH[3]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
+            # Validate outcome is one of the expected values
+            [[ "$outcome" =~ ^(success|fail|partial)$ ]] || continue
             description=$(sanitize_input "$description" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" -- "$description" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" "$description" 2>&1 || true)
             fi
 
-        # Pattern 4: APPROACH UPDATE A###: next <text>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ next\ (.+)$ ]]; then
+        # Pattern 4: APPROACH UPDATE A###|LAST: next <text>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
             local next_text="${BASH_REMATCH[2]}"
             next_text=$(sanitize_input "$next_text" 500)
 
@@ -299,9 +320,11 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
             fi
 
-        # Pattern 5: APPROACH COMPLETE A###
-        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ ([A-Z][0-9]{3})$ ]]; then
+        # Pattern 5: APPROACH COMPLETE A###|LAST
+        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ ([A-Z][0-9]{3}|LAST)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
