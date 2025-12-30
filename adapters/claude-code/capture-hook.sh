@@ -72,7 +72,7 @@ main() {
         local cmd="add"
         [[ "$level" == "system" ]] && cmd="add-system"
         
-        local result=$(PROJECT_DIR="$cwd" "$MANAGER" "$cmd" "$category" "$title" "$content" 2>&1)
+        local result=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$MANAGER" "$cmd" "$category" "$title" "$content" 2>&1)
         local lesson_id=$(echo "$result" | grep -oE '\[[LS][0-9]+\]' | head -1 || echo "")
         
         cat << EOF

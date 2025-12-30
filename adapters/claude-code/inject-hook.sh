@@ -36,7 +36,7 @@ run_decay_if_due() {
         # Run decay in background so it doesn't slow down session start
         # Try Python first, fall back to bash
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
+            PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
         elif [[ -x "$BASH_MANAGER" ]]; then
             "$BASH_MANAGER" decay 30 >/dev/null 2>&1 &
         fi
@@ -50,12 +50,12 @@ generate_context() {
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" inject 5 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 5 2>/dev/null || true)
     fi
 
     # Fall back to bash manager if Python fails or returns empty
     if [[ -z "$summary" && -x "$BASH_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" "$BASH_MANAGER" inject 5 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" inject 5 2>/dev/null || true)
     fi
 
     echo "$summary"
@@ -73,7 +73,7 @@ main() {
     # Also get active approaches (project-level only)
     local approaches=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        approaches=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" approach inject 2>/dev/null || true)
+        approaches=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" approach inject 2>/dev/null || true)
     fi
     if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
         if [[ -n "$summary" ]]; then

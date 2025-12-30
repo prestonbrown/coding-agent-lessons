@@ -163,7 +163,7 @@ process_ai_lessons() {
         # Use -- to terminate options and prevent injection via crafted titles
         local result=""
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                 python3 "$PYTHON_MANAGER" add-ai -- "$category" "$title" "$content" 2>&1 || true)
         fi
 
@@ -227,7 +227,7 @@ process_approaches() {
             [[ -z "$title" ]] && continue
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
             fi
 
@@ -238,7 +238,7 @@ process_approaches() {
             [[ -z "$title" ]] && continue
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
             fi
 
@@ -250,7 +250,7 @@ process_approaches() {
             status=$(sanitize_input "$status" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
             fi
 
@@ -261,7 +261,7 @@ process_approaches() {
             phase=$(sanitize_input "$phase" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --phase "$phase" 2>&1 || true)
             fi
 
@@ -272,7 +272,7 @@ process_approaches() {
             agent=$(sanitize_input "$agent" 30)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
             fi
 
@@ -284,7 +284,7 @@ process_approaches() {
             description=$(sanitize_input "$description" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" -- "$description" 2>&1 || true)
             fi
 
@@ -295,7 +295,7 @@ process_approaches() {
             next_text=$(sanitize_input "$next_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
             fi
 
@@ -304,7 +304,7 @@ process_approaches() {
             local approach_id="${BASH_REMATCH[1]}"
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach complete "$approach_id" 2>&1 || true)
             fi
         fi
@@ -405,12 +405,12 @@ main() {
 
         # Try Python manager first
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" cite "$lesson_id" 2>&1 || true)
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" cite "$lesson_id" 2>&1 || true)
         fi
 
         # Fall back to bash manager if Python fails
         if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+            result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
         fi
 
         if [[ "$result" == OK:* ]]; then
