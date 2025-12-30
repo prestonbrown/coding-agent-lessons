@@ -197,10 +197,10 @@ Manage the coding-agent-lessons system.
 
 Based on arguments, run the appropriate command:
 
-- No args or "list": `~/.config/coding-agent-lessons/lessons-manager.sh list --verbose`
+- No args or "list": `~/.config/coding-agent-lessons/lessons-manager.sh list`
 - "search <term>": `~/.config/coding-agent-lessons/lessons-manager.sh list --search "<term>"`
 - "category <cat>": `~/.config/coding-agent-lessons/lessons-manager.sh list --category <cat>`
-- "stale": `~/.config/coding-agent-lessons/lessons-manager.sh list --stale --verbose`
+- "stale": `~/.config/coding-agent-lessons/lessons-manager.sh list --stale`
 - "edit <id> <content>": `~/.config/coding-agent-lessons/lessons-manager.sh edit <id> "<content>"`
 - "delete <id>": Show lesson, confirm, then `~/.config/coding-agent-lessons/lessons-manager.sh delete <id>`
 
