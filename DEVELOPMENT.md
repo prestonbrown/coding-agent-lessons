@@ -80,7 +80,6 @@ class Approach:
     next_steps: str
     files: List[str]
     tried: List[TriedApproach]
-    code_snippets: List[str]
 ```
 
 #### Key Functions
@@ -100,7 +99,6 @@ class Approach:
 | `approach_update(id, **kwargs)` | Update approach fields |
 | `approach_complete(id)` | Mark complete, prompt for lessons |
 | `approach_inject()` | Generate approach context |
-| `detect_phase_from_tools(tools)` | Infer phase from tool usage |
 
 #### Rating System
 
@@ -215,28 +213,6 @@ APPROACH_MAX_AGE_DAYS = 7    # Or within N days
 ```
 
 Completed approaches remain visible if they match EITHER criterion.
-
-### Phase Detection
-
-The `detect_phase_from_tools()` function infers phase from tool usage:
-
-```python
-def detect_phase_from_tools(tools: list) -> str:
-    """Detect approach phase from tool usage patterns.
-    Priority: review > implementing > planning > research"""
-
-    # Bash with test/build commands → review
-    # Edit or Write to code files → implementing
-    # Write to .md or AskUserQuestion → planning
-    # Read, Grep, Glob → research (default)
-```
-
-| Tools Used | Inferred Phase |
-|------------|----------------|
-| Bash (pytest, npm test, make) | review |
-| Edit, Write to .py/.ts/.js | implementing |
-| Write to .md, AskUserQuestion | planning |
-| Read, Grep, Glob | research |
 
 ## Adapters
 

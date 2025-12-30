@@ -43,7 +43,7 @@ from typing import List, Optional
 
 # These imports will fail until implementation exists - that's expected for TDD
 try:
-    from core.lessons_manager import (
+    from core import (
         LessonsManager,
         Approach,
         TriedApproach,
@@ -1311,230 +1311,6 @@ class TestApproachPhaseAgentEdgeCases:
 
 
 # =============================================================================
-# Phase 4.2: Code Snippets Tests
-# =============================================================================
-
-
-class TestApproachCodeSnippets:
-    """Tests for code snippets in approaches."""
-
-    def test_approach_has_code_snippets_field(self, manager: "LessonsManager"):
-        """Approach dataclass should have code_snippets field."""
-        manager.approach_add(title="Test approach")
-        approach = manager.approach_get("A001")
-
-        assert approach is not None
-        assert hasattr(approach, "code_snippets")
-        assert isinstance(approach.code_snippets, list)
-        assert len(approach.code_snippets) == 0
-
-    def test_approach_add_code_snippet(self, manager: "LessonsManager"):
-        """Should add a code snippet to an approach."""
-        manager.approach_add(title="Test approach")
-        manager.approach_add_code("A001", "def hello():\n    print('world')")
-
-        approach = manager.approach_get("A001")
-        assert len(approach.code_snippets) == 1
-        assert "def hello():" in approach.code_snippets[0]
-
-    def test_approach_add_multiple_code_snippets(self, manager: "LessonsManager"):
-        """Should support multiple code snippets per approach."""
-        manager.approach_add(title="Test approach")
-        manager.approach_add_code("A001", "snippet 1")
-        manager.approach_add_code("A001", "snippet 2")
-        manager.approach_add_code("A001", "snippet 3")
-
-        approach = manager.approach_get("A001")
-        assert len(approach.code_snippets) == 3
-
-    def test_approach_add_code_nonexistent_fails(self, manager: "LessonsManager"):
-        """Should reject adding code to nonexistent approach."""
-        with pytest.raises(ValueError, match="[Nn]ot found|[Ii]nvalid"):
-            manager.approach_add_code("A999", "code")
-
-    def test_approach_add_code_sets_updated_date(self, manager: "LessonsManager"):
-        """Adding code should update the updated date."""
-        manager.approach_add(title="Test approach")
-        approach_before = manager.approach_get("A001")
-
-        # Simulate time passing by modifying the stored updated date
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        content = approaches_file.read_text()
-        content = content.replace(
-            f"**Updated**: {approach_before.updated.isoformat()}",
-            "**Updated**: 2020-01-01"
-        )
-        approaches_file.write_text(content)
-
-        manager.approach_add_code("A001", "new code")
-        approach_after = manager.approach_get("A001")
-
-        assert approach_after.updated == date.today()
-
-
-class TestApproachCodeSnippetsFormat:
-    """Tests for code snippets in markdown format."""
-
-    def test_code_snippets_formatted_as_fenced_blocks(self, manager: "LessonsManager"):
-        """Code snippets should be formatted as fenced code blocks."""
-        manager.approach_add(title="Test approach")
-        manager.approach_add_code("A001", "def test():\n    pass")
-
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        content = approaches_file.read_text()
-
-        assert "**Code**:" in content
-        assert "```" in content
-
-    def test_code_snippets_with_language_hint(self, manager: "LessonsManager"):
-        """Code snippets should support optional language hints."""
-        manager.approach_add(title="Test approach")
-        manager.approach_add_code("A001", "def test():\n    pass", language="python")
-
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        content = approaches_file.read_text()
-
-        assert "```python" in content
-
-    def test_code_snippets_parsed_correctly(self, manager: "LessonsManager"):
-        """Should parse code snippets from markdown correctly."""
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
-
-        content_with_code = """# APPROACHES.md - Active Work Tracking
-
-> Track ongoing work with tried approaches and next steps.
-> When completed, review for lessons to extract.
-
-## Active Approaches
-
-### [A001] Test approach
-- **Status**: in_progress | **Phase**: implementing | **Agent**: user
-- **Created**: 2025-12-28 | **Updated**: 2025-12-28
-- **Files**: test.py
-- **Description**: Testing code snippets
-
-**Code**:
-```python
-def reconnect(delay: int = 1000) -> None:
-    '''Reconnect with backoff.'''
-    sleep(delay)
-    return connect()
-```
-
-```typescript
-export function reconnect(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 1000));
-}
-```
-
-**Tried**:
-1. [success] Code snippets work
-
-**Next**: Continue testing
-
----
-"""
-        approaches_file.write_text(content_with_code)
-
-        approach = manager.approach_get("A001")
-
-        assert approach is not None
-        assert len(approach.code_snippets) == 2
-        assert "def reconnect" in approach.code_snippets[0]
-        assert "export function" in approach.code_snippets[1]
-
-    def test_backward_compatibility_no_code_section(self, manager: "LessonsManager"):
-        """Should handle approaches without code section."""
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        approaches_file.parent.mkdir(parents=True, exist_ok=True)
-
-        content_no_code = """# APPROACHES.md - Active Work Tracking
-
-> Track ongoing work with tried approaches and next steps.
-> When completed, review for lessons to extract.
-
-## Active Approaches
-
-### [A001] Test approach
-- **Status**: in_progress | **Phase**: research | **Agent**: user
-- **Created**: 2025-12-28 | **Updated**: 2025-12-28
-- **Files**: test.py
-- **Description**: No code snippets
-
-**Tried**:
-1. [success] Works
-
-**Next**: Continue
-
----
-"""
-        approaches_file.write_text(content_no_code)
-
-        approach = manager.approach_get("A001")
-
-        assert approach is not None
-        assert approach.code_snippets == []
-
-
-class TestApproachCodeSnippetsCLI:
-    """Tests for code snippets CLI commands."""
-
-    def test_cli_approach_add_code(self, manager: "LessonsManager"):
-        """CLI approach_add_code should add code snippets."""
-        manager.approach_add(title="Test approach")
-
-        # Test the method that CLI --code would call
-        manager.approach_add_code("A001", "print('hello')")
-
-        approach = manager.approach_get("A001")
-        assert len(approach.code_snippets) == 1
-
-    def test_cli_approach_add_code_with_language(self, manager: "LessonsManager"):
-        """CLI approach_add_code should support language hints."""
-        manager.approach_add(title="Test approach")
-
-        # Test the method that CLI --code --language would call
-        manager.approach_add_code("A001", "print('hello')", language="python")
-
-        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
-        content = approaches_file.read_text()
-        assert "```python" in content
-
-
-class TestApproachCodeSnippetsInjection:
-    """Tests for code snippets in injection output."""
-
-    def test_approach_inject_shows_code_snippets(self, manager: "LessonsManager"):
-        """Injection output should include code snippets when present."""
-        manager.approach_add(title="WebSocket fix", phase="implementing")
-        manager.approach_add_code(
-            "A001",
-            "async def connect(): await ws.open()",
-            language="python"
-        )
-
-        output = manager.approach_inject()
-
-        # Should show code section in injection
-        assert "Code" in output or "code" in output
-        assert "connect" in output
-
-    def test_approach_inject_truncates_long_code(self, manager: "LessonsManager"):
-        """Long code snippets should be truncated in injection."""
-        manager.approach_add(title="Large refactor")
-        long_code = "x = 1\n" * 100  # 100 lines
-        manager.approach_add_code("A001", long_code)
-
-        output = manager.approach_inject()
-
-        # Should not include all 100 lines
-        # Count occurrences of "x = 1" in output
-        occurrences = output.count("x = 1")
-        assert occurrences < 50  # Should be truncated significantly
-
-
-# =============================================================================
 # Phase 4.6: Approach Decay Tests
 # =============================================================================
 
@@ -1719,107 +1495,6 @@ class TestApproachDecayConstants:
 # =============================================================================
 
 
-class TestPhaseDetectionFromTools:
-    """Tests for inferring approach phase from tool usage patterns."""
-
-    def test_detect_research_phase_from_read_grep(self):
-        """Mostly Read/Grep/Glob with no writes should be research."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Read", "file_path": "/some/file.py"},
-            {"name": "Grep", "pattern": "function"},
-            {"name": "Glob", "pattern": "*.py"},
-            {"name": "Read", "file_path": "/another/file.py"},
-        ]
-        assert detect_phase_from_tools(tools) == "research"
-
-    def test_detect_planning_phase_from_plan_file_writes(self):
-        """Writing to .md files (plan files) should indicate planning."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Read", "file_path": "/some/code.py"},
-            {"name": "Write", "file_path": "/plan/IMPLEMENTATION_PLAN.md"},
-        ]
-        assert detect_phase_from_tools(tools) == "planning"
-
-    def test_detect_planning_phase_from_ask_user(self):
-        """AskUserQuestion indicates planning/clarification."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Read", "file_path": "/some/code.py"},
-            {"name": "AskUserQuestion", "questions": []},
-        ]
-        assert detect_phase_from_tools(tools) == "planning"
-
-    def test_detect_implementing_phase_from_edit(self):
-        """Edit tool usage indicates implementing."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Read", "file_path": "/src/app.py"},
-            {"name": "Edit", "file_path": "/src/app.py"},
-        ]
-        assert detect_phase_from_tools(tools) == "implementing"
-
-    def test_detect_implementing_phase_from_code_writes(self):
-        """Writing to code files indicates implementing."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Read", "file_path": "/src/app.py"},
-            {"name": "Write", "file_path": "/src/new_module.py"},
-        ]
-        assert detect_phase_from_tools(tools) == "implementing"
-
-    def test_detect_review_phase_from_test_commands(self):
-        """Bash with test/pytest commands indicates review."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Bash", "command": "python -m pytest tests/"},
-            {"name": "Read", "file_path": "/tests/test_output.txt"},
-        ]
-        assert detect_phase_from_tools(tools) == "review"
-
-    def test_detect_review_phase_from_build_commands(self):
-        """Bash with build commands indicates review."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Bash", "command": "npm run build"},
-        ]
-        assert detect_phase_from_tools(tools) == "review"
-
-    def test_detect_phase_empty_tools_defaults_research(self):
-        """Empty tool list should default to research."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        assert detect_phase_from_tools([]) == "research"
-
-    def test_detect_phase_mixed_tools_uses_priority(self):
-        """When tools are mixed, use priority: review > implementing > planning > research."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        # If both edit and test, should be review (test takes priority)
-        tools = [
-            {"name": "Edit", "file_path": "/src/app.py"},
-            {"name": "Bash", "command": "pytest"},
-        ]
-        assert detect_phase_from_tools(tools) == "review"
-
-    def test_detect_phase_enter_plan_mode_triggers_research(self):
-        """EnterPlanMode tool should trigger research phase initially."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "EnterPlanMode"},
-        ]
-        assert detect_phase_from_tools(tools) == "research"
-
-
 class TestPlanModeApproachCreation:
     """Tests for auto-creating approaches when entering plan mode."""
 
@@ -1925,7 +1600,7 @@ class TestHookCLIIntegration:
         result = subprocess.run(
             [
                 sys.executable,
-                "core/lessons_manager.py",
+                "core/cli.py",
                 "approach",
                 "add",
                 "Test Plan Mode Feature",
@@ -1951,7 +1626,7 @@ class TestHookCLIIntegration:
         result = subprocess.run(
             [
                 sys.executable,
-                "core/lessons_manager.py",
+                "core/cli.py",
                 "approach",
                 "start",
                 "Test Start Alias",
@@ -1975,7 +1650,7 @@ class TestHookCLIIntegration:
 
         # First create an approach
         subprocess.run(
-            [sys.executable, "core/lessons_manager.py", "approach", "add", "Test"],
+            [sys.executable, "core/cli.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
@@ -1985,7 +1660,7 @@ class TestHookCLIIntegration:
         result = subprocess.run(
             [
                 sys.executable,
-                "core/lessons_manager.py",
+                "core/cli.py",
                 "approach",
                 "update",
                 "A001",
@@ -2008,7 +1683,7 @@ class TestHookCLIIntegration:
 
         # First create an approach
         subprocess.run(
-            [sys.executable, "core/lessons_manager.py", "approach", "add", "Test"],
+            [sys.executable, "core/cli.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
@@ -2018,7 +1693,7 @@ class TestHookCLIIntegration:
         result = subprocess.run(
             [
                 sys.executable,
-                "core/lessons_manager.py",
+                "core/cli.py",
                 "approach",
                 "update",
                 "A001",
@@ -2032,51 +1707,6 @@ class TestHookCLIIntegration:
 
         assert result.returncode == 0
         assert "agent" in result.stdout.lower()
-
-
-class TestPhaseDetectionEdgeCases:
-    """Additional edge case tests for phase detection."""
-
-    def test_detect_phase_write_to_test_file(self):
-        """Write to test files should still be implementing."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Write", "file_path": "/tests/test_new.py"},
-        ]
-        # Test files are code, so implementing
-        assert detect_phase_from_tools(tools) == "implementing"
-
-    def test_detect_phase_multiple_builds(self):
-        """Multiple build commands should be review."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Bash", "command": "npm run build"},
-            {"name": "Bash", "command": "npm test"},
-        ]
-        assert detect_phase_from_tools(tools) == "review"
-
-    def test_detect_phase_grep_without_edit(self):
-        """Grep alone is research."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "Grep", "pattern": "def main"},
-            {"name": "Grep", "pattern": "class.*Handler"},
-        ]
-        assert detect_phase_from_tools(tools) == "research"
-
-    def test_detect_phase_exit_plan_mode(self):
-        """ExitPlanMode indicates planning is complete."""
-        from core.lessons_manager import detect_phase_from_tools
-
-        tools = [
-            {"name": "ExitPlanMode"},
-        ]
-        # ExitPlanMode means planning is done, defaults to research
-        # (user should explicitly update to implementing)
-        assert detect_phase_from_tools(tools) == "research"
 
 
 # =============================================================================
@@ -2146,7 +1776,7 @@ class TestStopHookLastReference:
 
         assert result.returncode == 0
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
         approach = manager.approach_get("A001")
         assert approach is not None
@@ -2184,7 +1814,7 @@ class TestStopHookLastReference:
 
         assert result.returncode == 0
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
         approach = manager.approach_get("A001")
         assert approach is not None
@@ -2224,7 +1854,7 @@ class TestStopHookLastReference:
 
         assert result.returncode == 0
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
         approach = manager.approach_get("A001")
         assert approach is not None
@@ -2263,7 +1893,7 @@ class TestStopHookLastReference:
 
         assert result.returncode == 0
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
 
         # A001 (First) should still be research (not updated)
@@ -2454,7 +2084,7 @@ class TestApproachCheckpointCLI:
             [
                 sys.executable,
                 "-m",
-                "core.lessons_manager",
+                "core.cli",
                 "approach",
                 "add",
                 "Test approach",
@@ -2470,7 +2100,7 @@ class TestApproachCheckpointCLI:
             [
                 sys.executable,
                 "-m",
-                "core.lessons_manager",
+                "core.cli",
                 "approach",
                 "update",
                 "A001",
@@ -2485,7 +2115,7 @@ class TestApproachCheckpointCLI:
         assert "Updated A001 checkpoint" in result.stdout
 
         # Verify via manager directly
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(lessons_base, project_root)
         approach = manager.approach_get("A001")
@@ -2525,6 +2155,199 @@ class TestApproachCheckpointPreservation:
 
         approach = manager.approach_get(approach_id)
         assert approach.checkpoint == "Important checkpoint"
+
+
+# =============================================================================
+# TodoWrite Sync Tests
+# =============================================================================
+
+
+class TestApproachSyncTodos:
+    """Tests for TodoWrite → Approach sync functionality."""
+
+    def test_sync_creates_approach_if_none_active(self, manager: LessonsManager) -> None:
+        """sync_todos creates new approach from first todo if no active approaches."""
+        todos = [
+            {"content": "Research patterns", "status": "completed", "activeForm": "Researching"},
+            {"content": "Implement fix", "status": "in_progress", "activeForm": "Implementing"},
+        ]
+
+        result = manager.approach_sync_todos(todos)
+
+        assert result is not None
+        approach = manager.approach_get(result)
+        assert approach is not None
+        assert "Research patterns" in approach.title
+
+    def test_sync_updates_existing_approach(self, manager: LessonsManager) -> None:
+        """sync_todos updates most recently updated active approach."""
+        approach_id = manager.approach_add("Existing approach")
+
+        todos = [
+            {"content": "Done task", "status": "completed", "activeForm": "Done"},
+            {"content": "Current task", "status": "in_progress", "activeForm": "Working"},
+        ]
+
+        result = manager.approach_sync_todos(todos)
+
+        assert result == approach_id
+
+    def test_sync_completed_to_tried(self, manager: LessonsManager) -> None:
+        """Completed todos become tried entries with success outcome."""
+        approach_id = manager.approach_add("Test approach")
+
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "completed", "activeForm": "Task B"},
+        ]
+
+        manager.approach_sync_todos(todos)
+        approach = manager.approach_get(approach_id)
+
+        assert len(approach.tried) == 2
+        assert approach.tried[0].outcome == "success"
+        assert approach.tried[0].description == "Task A"
+
+    def test_sync_in_progress_to_checkpoint(self, manager: LessonsManager) -> None:
+        """In-progress todo becomes checkpoint."""
+        approach_id = manager.approach_add("Test approach")
+
+        todos = [
+            {"content": "Current work", "status": "in_progress", "activeForm": "Working"},
+        ]
+
+        manager.approach_sync_todos(todos)
+        approach = manager.approach_get(approach_id)
+
+        assert approach.checkpoint == "Current work"
+
+    def test_sync_pending_to_next_steps(self, manager: LessonsManager) -> None:
+        """Pending todos become next_steps."""
+        approach_id = manager.approach_add("Test approach")
+
+        todos = [
+            {"content": "Next A", "status": "pending", "activeForm": "Next A"},
+            {"content": "Next B", "status": "pending", "activeForm": "Next B"},
+        ]
+
+        manager.approach_sync_todos(todos)
+        approach = manager.approach_get(approach_id)
+
+        assert "Next A" in approach.next_steps
+        assert "Next B" in approach.next_steps
+
+    def test_sync_empty_todos_returns_none(self, manager: LessonsManager) -> None:
+        """Empty todo list returns None."""
+        result = manager.approach_sync_todos([])
+        assert result is None
+
+    def test_sync_avoids_duplicate_tried(self, manager: LessonsManager) -> None:
+        """sync_todos doesn't add duplicate tried entries."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_add_tried(approach_id, "success", "Already done")
+
+        todos = [
+            {"content": "Already done", "status": "completed", "activeForm": "Done"},
+        ]
+
+        manager.approach_sync_todos(todos)
+        approach = manager.approach_get(approach_id)
+
+        # Should still only have 1 tried entry
+        assert len(approach.tried) == 1
+
+
+class TestApproachInjectTodos:
+    """Tests for Approach → TodoWrite injection functionality."""
+
+    def test_inject_returns_empty_if_no_active(self, manager: LessonsManager) -> None:
+        """inject_todos returns empty string if no active approaches."""
+        result = manager.approach_inject_todos()
+        assert result == ""
+
+    def test_inject_formats_approach_as_todos(self, manager: LessonsManager) -> None:
+        """inject_todos formats approach state as todo list."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_add_tried(approach_id, "success", "Completed task")
+        manager.approach_update_checkpoint(approach_id, "Current task")
+        manager.approach_update_next(approach_id, "Next task")
+
+        result = manager.approach_inject_todos()
+
+        assert "CONTINUE PREVIOUS WORK" in result
+        assert "Completed task" in result
+        assert "Current task" in result
+        assert "Next task" in result
+        assert "```json" in result
+
+    def test_inject_shows_status_icons(self, manager: LessonsManager) -> None:
+        """inject_todos uses status icons for visual clarity."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_add_tried(approach_id, "success", "Done")
+        manager.approach_update_checkpoint(approach_id, "Doing")
+        manager.approach_update_next(approach_id, "Todo")
+
+        result = manager.approach_inject_todos()
+
+        assert "✓" in result  # completed
+        assert "→" in result  # in_progress
+        assert "○" in result  # pending
+
+    def test_inject_json_excludes_completed(self, manager: LessonsManager) -> None:
+        """inject_todos JSON only includes non-completed todos."""
+        import json
+
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_add_tried(approach_id, "success", "Done task")
+        manager.approach_update_checkpoint(approach_id, "Current task")
+
+        result = manager.approach_inject_todos()
+
+        # Extract JSON from result
+        json_start = result.find("```json\n") + len("```json\n")
+        json_end = result.find("\n```", json_start)
+        json_str = result[json_start:json_end]
+        todos = json.loads(json_str)
+
+        # JSON should only have current task, not done task
+        assert len(todos) == 1
+        assert todos[0]["content"] == "Current task"
+        assert todos[0]["status"] == "in_progress"
+
+
+class TestTodoSyncRoundTrip:
+    """Tests for full TodoWrite ↔ Approach round-trip sync."""
+
+    def test_full_round_trip(self, manager: LessonsManager) -> None:
+        """Todos synced to approach can be restored as todos."""
+        import json
+
+        # Simulate session 1: sync todos to approach
+        todos_session1 = [
+            {"content": "Step 1", "status": "completed", "activeForm": "Step 1"},
+            {"content": "Step 2", "status": "in_progress", "activeForm": "Step 2"},
+            {"content": "Step 3", "status": "pending", "activeForm": "Step 3"},
+        ]
+        approach_id = manager.approach_sync_todos(todos_session1)
+
+        # Simulate session 2: inject todos from approach
+        result = manager.approach_inject_todos()
+
+        # Extract and parse JSON
+        json_start = result.find("```json\n") + len("```json\n")
+        json_end = result.find("\n```", json_start)
+        json_str = result[json_start:json_end]
+        todos_session2 = json.loads(json_str)
+
+        # Should have Step 2 (in_progress) and Step 3 (pending)
+        assert len(todos_session2) == 2
+        contents = [t["content"] for t in todos_session2]
+        assert "Step 2" in contents
+        assert "Step 3" in contents
+
+        # Step 1 should be visible in "Previous state" but not in JSON
+        assert "Step 1" in result  # In the display
+        assert "completed" not in json_str  # Not in the JSON
 
 
 if __name__ == "__main__":

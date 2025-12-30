@@ -16,10 +16,10 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 - **Token tracking**: Warns when context injection is heavy (>2000 tokens)
 
 ### Approaches System
+- **TodoWrite sync**: Use TodoWrite naturally - todos auto-sync to APPROACHES.md for persistence
 - **Work tracking**: Track ongoing tasks with tried approaches and next steps
 - **Phases**: `research` → `planning` → `implementing` → `review`
-- **Agent tracking**: Know which agent type worked on what
-- **Code snippets**: Attach relevant code to approaches
+- **Session continuity**: Approaches restore as TodoWrite suggestions on next session
 - **Completion workflow**: Extract lessons when finishing work
 
 ## Quick Install
@@ -53,15 +53,25 @@ Format: `LESSON: [category:] title - content`
 
 ### Tracking Approaches
 
-For multi-step work, use approaches:
+For multi-step work, **just use TodoWrite** - it auto-syncs to APPROACHES.md:
+
+```
+[Agent uses TodoWrite naturally]
+→ stop-hook captures todos to APPROACHES.md
+→ Next session: inject-hook restores as continuation prompt
+```
+
+Your todos map to approach fields:
+- `completed` todos → `tried` entries (success)
+- `in_progress` todo → checkpoint (current focus)
+- `pending` todos → next steps
+
+**Manual approach commands** (for explicit control):
 
 ```
 APPROACH: Implement WebSocket reconnection
-APPROACH UPDATE A001: status in_progress
-APPROACH UPDATE A001: phase implementing
 APPROACH UPDATE A001: tried fail - Simple setTimeout retry races with disconnect
 APPROACH UPDATE A001: tried success - Event-based with AbortController
-APPROACH UPDATE A001: next Write integration tests
 APPROACH COMPLETE A001
 ```
 
@@ -112,6 +122,12 @@ Right side: Recent velocity (decays over time)
 
 ### Approaches Lifecycle
 
+**Via TodoWrite (recommended)**:
+1. **Use TodoWrite**: Agent uses TodoWrite naturally with reminders
+2. **Auto-sync**: stop-hook captures final todo state to APPROACHES.md
+3. **Restore**: Next session, inject-hook formats approach as TodoWrite continuation
+
+**Via manual commands**:
 1. **Create**: `APPROACH: title` or `PLAN MODE: title`
 2. **Track**: Update status, phase, tried approaches, next steps
 3. **Complete**: `APPROACH COMPLETE A001` triggers lesson extraction prompt
@@ -191,11 +207,12 @@ python3 core/lessons_manager.py approach update A001 --status in_progress
 python3 core/lessons_manager.py approach update A001 --phase implementing
 python3 core/lessons_manager.py approach update A001 --tried fail "Description"
 python3 core/lessons_manager.py approach update A001 --next "Next steps"
-python3 core/lessons_manager.py approach update A001 --code "snippet"
 python3 core/lessons_manager.py approach complete A001
 python3 core/lessons_manager.py approach archive A001
 python3 core/lessons_manager.py approach list [--status X]
 python3 core/lessons_manager.py approach inject  # For context
+python3 core/lessons_manager.py approach sync-todos '<json>'  # Sync TodoWrite to approach
+python3 core/lessons_manager.py approach inject-todos  # Format for TodoWrite continuation
 ```
 
 ## Hook Patterns

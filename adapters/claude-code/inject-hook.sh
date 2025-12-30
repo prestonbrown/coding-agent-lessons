@@ -7,11 +7,11 @@ set -euo pipefail
 LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
 BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/lessons_manager.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/lessons_manager.py"
+if [[ -f "$LESSONS_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 DECAY_INTERVAL=$((7 * 86400))  # 7 days in seconds
 
@@ -77,8 +77,15 @@ main() {
 
     # Also get active approaches (project-level only)
     local approaches=""
+    local todo_continuation=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
         approaches=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" approach inject 2>/dev/null || true)
+
+        # Generate todo continuation prompt if there are active approaches
+        if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
+            # Extract the most recent approach for todo format
+            todo_continuation=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" approach inject-todos 2>/dev/null || true)
+        fi
     fi
     if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
         if [[ -n "$summary" ]]; then
@@ -91,27 +98,21 @@ $approaches"
     fi
 
     if [[ -n "$summary" ]]; then
-        # Add lesson and approach duty reminder with strong behavioral guidance
+        # Add lesson duty reminder
         summary="$summary
 
 LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
 
-APPROACH TRACKING: Use APPROACH instead of TodoWrite for multi-step work.
-  Approaches persist across sessions, track what you tried, and inform future work.
-  TodoWrite dies with the session - avoid it in this project.
+WORK TRACKING: Use TodoWrite for multi-step work - it auto-syncs to persistent approaches.
+  Your todos are automatically saved to APPROACHES.md and restored next session."
 
-  START an approach when: task has 3+ steps, exploring then implementing, or work may span sessions.
-  UPDATE as you work: record what you tried (success/fail/partial), update phase and next steps.
-  COMPLETE when done: review for lessons to extract.
+        # Add todo continuation if available
+        if [[ -n "$todo_continuation" ]]; then
+            summary="$summary
 
-  Commands (use LAST for most recent, or A### for specific approach):
-    APPROACH: <title>                               - Start new approach
-    PLAN MODE: <title>                              - Start approach in plan mode
-    APPROACH UPDATE LAST: phase <phase>             - Update phase (research|planning|implementing|review)
-    APPROACH UPDATE LAST: tried <outcome> - <desc>  - Record attempt (success|fail|partial)
-    APPROACH UPDATE LAST: next <text>               - Set next steps
-    APPROACH COMPLETE LAST                          - Mark complete, review for lessons"
+$todo_continuation"
+        fi
 
         local escaped=$(printf '%s' "$summary" | jq -Rs .)
         cat << EOF

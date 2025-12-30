@@ -137,21 +137,6 @@ def test_approach_phase_transition(temp_env):
     assert approaches[0].phase == "implementing"
 ```
 
-### Testing Phase Detection
-
-```python
-def test_bash_pytest_is_review(temp_env):
-    """Test that pytest commands are detected as review phase."""
-    tools = [
-        {"name": "Bash", "input": {"command": "pytest tests/"}},
-        {"name": "Read", "input": {"file_path": "src/main.py"}},
-    ]
-
-    phase = detect_phase_from_tools(tools)
-
-    assert phase == "review"
-```
-
 ### Testing CLI Integration
 
 ```python
@@ -270,13 +255,6 @@ assert "CONTEXT HEAVY" in output or total_tokens < 2000
 approach = manager.approach_list()[0]
 assert len(approach.tried) == 1
 assert approach.tried[0].outcome == "fail"
-
-# Check code snippet attached
-assert len(approach.code_snippets) == 1
-assert "def foo" in approach.code_snippets[0]
-
-# Check phase detection
-assert detect_phase_from_tools([{"name": "Edit", "input": {"file_path": "x.py"}}]) == "implementing"
 ```
 
 ## Mocking

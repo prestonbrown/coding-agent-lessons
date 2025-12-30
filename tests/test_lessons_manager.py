@@ -28,7 +28,7 @@ from typing import Optional
 
 # These imports will fail until implementation exists - that's expected for TDD
 try:
-    from core.lessons_manager import (
+    from core import (
         LessonsManager,
         Lesson,
         LessonLevel,
@@ -36,6 +36,7 @@ try:
         LessonRating,
         parse_lesson,
         format_lesson,
+        SCORE_RELEVANCE_MAX_QUERY_LEN,
     )
 except ImportError:
     # Mark all tests as expected to fail until implementation exists
@@ -387,8 +388,9 @@ class TestInjection:
         result = manager_with_lessons.inject_context(top_n=5)
         formatted = result.format()
 
-        assert "system" in formatted.lower()
-        assert "project" in formatted.lower()
+        # New condensed format shows counts as "1S, 2L" instead of "1 system, 2 project"
+        assert "S" in formatted or "s" in formatted.lower()
+        assert "L" in formatted
 
     def test_inject_empty_returns_nothing(self, manager: "LessonsManager"):
         """Injection with no lessons should return empty result."""
@@ -397,10 +399,10 @@ class TestInjection:
         assert len(result.top_lessons) == 0
         assert result.total_count == 0
 
-    def test_inject_shows_search_tip_when_other_lessons_exist(
+    def test_inject_shows_other_lessons_when_exist(
         self, manager: "LessonsManager"
     ):
-        """Injection should show search tip when there are more lessons than top_n."""
+        """Injection should show other lessons compactly when there are more lessons than top_n."""
         # Add more lessons than top_n
         for i in range(5):
             manager.add_lesson("project", "pattern", f"Lesson {i}", f"Content {i}")
@@ -409,9 +411,10 @@ class TestInjection:
         result = manager.inject_context(top_n=2)
         formatted = result.format()
 
-        # Should contain the search tip since there are remaining lessons
-        assert "search" in formatted.lower()
-        assert "--search" in formatted
+        # Should contain the remaining lessons in compact format with | separator
+        # Other lessons are now shown as "[L003] Lesson 2 | [L004] Lesson 3 | [L005] Lesson 4"
+        assert "[L003]" in formatted
+        assert "|" in formatted
 
 
 # =============================================================================
@@ -575,45 +578,55 @@ class TestBackwardCompatibility:
 
 
 class TestLessonRating:
-    """Tests for the dual-dimension star rating display."""
+    """Tests for the lesson rating display."""
 
     def test_rating_format(self):
-        """Rating should be in format [total|velocity]."""
+        """Rating should use emoji stars format."""
         rating = LessonRating(uses=5, velocity=2)
         display = rating.format()
+
+        # New format uses emoji stars (filled and empty)
+        assert "★" in display or "☆" in display
+
+    def test_rating_uses_logarithmic_scale(self):
+        """Uses should use logarithmic scale for spread."""
+        # 1-2 uses = 1 star
+        assert LessonRating(uses=1, velocity=0).format() == "★☆☆☆☆"
+        assert LessonRating(uses=2, velocity=0).format() == "★☆☆☆☆"
+
+        # 3-5 uses = 2 stars
+        assert LessonRating(uses=3, velocity=0).format() == "★★☆☆☆"
+
+        # 6-12 uses = 3 stars
+        assert LessonRating(uses=6, velocity=0).format() == "★★★☆☆"
+
+        # 13-30 uses = 4 stars
+        assert LessonRating(uses=15, velocity=0).format() == "★★★★☆"
+
+        # 31+ uses = 5 stars
+        assert LessonRating(uses=31, velocity=0).format() == "★★★★★"
+
+    def test_rating_legacy_format(self):
+        """Legacy format should be [total|velocity] for file storage."""
+        rating = LessonRating(uses=5, velocity=2)
+        display = rating.format_legacy()
 
         assert display.startswith("[")
         assert display.endswith("]")
         assert "|" in display
+        # Uses = 5 -> 2 stars (3-5 range)
+        assert "**---" in display
 
-    def test_rating_uses_logarithmic_scale(self):
-        """Uses side should use logarithmic scale for spread."""
-        # 1-2 uses = *
-        assert "*----" in LessonRating(uses=1, velocity=0).format()
-        assert "*----" in LessonRating(uses=2, velocity=0).format()
-
-        # 3-5 uses = **
-        assert "**---" in LessonRating(uses=3, velocity=0).format()
-
-        # 6-12 uses = ***
-        assert "***--" in LessonRating(uses=6, velocity=0).format()
-
-        # 13-30 uses = ****
-        assert "****-" in LessonRating(uses=15, velocity=0).format()
-
-        # 31+ uses = *****
-        assert "*****" in LessonRating(uses=31, velocity=0).format()
-
-    def test_rating_velocity_scale(self):
-        """Velocity side should show recent activity."""
+    def test_rating_velocity_in_legacy_format(self):
+        """Velocity should appear in legacy format for file storage."""
         # Low velocity
-        assert "-----" in LessonRating(uses=1, velocity=0).format()
+        assert "-----" in LessonRating(uses=1, velocity=0).format_legacy()
 
         # Medium velocity
         rating_mid = LessonRating(uses=1, velocity=2.5)
-        display = rating_mid.format()
+        legacy = rating_mid.format_legacy()
         # Should show some activity on right side
-        assert display.count("*") > 0 or display.count("+") > 0
+        assert legacy.count("*") > 0 or legacy.count("+") > 0
 
 
 # =============================================================================
@@ -1066,7 +1079,7 @@ class TestCLI:
 
         result = subprocess.run(
             [
-                "python3", "core/lessons_manager.py",
+                "python3", "core/cli.py",
                 "add", "--no-promote",
                 "pattern", "CLI Test", "This should not promote"
             ],
@@ -1083,7 +1096,7 @@ class TestCLI:
         assert "(no-promote)" in result.stdout
 
         # Verify the lesson was created with promotable=False
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         lesson = manager.get_lesson("L001")
         assert lesson is not None
@@ -1094,7 +1107,7 @@ class TestCLI:
 
         result = subprocess.run(
             [
-                "python3", "core/lessons_manager.py",
+                "python3", "core/cli.py",
                 "add-ai", "--no-promote",
                 "pattern", "AI Test", "AI non-promotable lesson"
             ],
@@ -1110,7 +1123,7 @@ class TestCLI:
         assert result.returncode == 0
         assert "(no-promote)" in result.stdout
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         lesson = manager.get_lesson("L001")
         assert lesson is not None
@@ -1119,7 +1132,7 @@ class TestCLI:
 
     def test_cli_list_basic(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list command should work without flags."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         # Add some lessons first
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1129,7 +1142,7 @@ class TestCLI:
         )
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list"],
+            ["python3", "core/cli.py", "list"],
             capture_output=True,
             text=True,
             env={
@@ -1145,7 +1158,7 @@ class TestCLI:
 
     def test_cli_list_project_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --project should only show project lessons."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
@@ -1158,7 +1171,7 @@ class TestCLI:
         )
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list", "--project"],
+            ["python3", "core/cli.py", "list", "--project"],
             capture_output=True,
             text=True,
             env={
@@ -1174,7 +1187,7 @@ class TestCLI:
 
     def test_cli_list_system_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --system should only show system lessons."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
@@ -1187,7 +1200,7 @@ class TestCLI:
         )
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list", "--system"],
+            ["python3", "core/cli.py", "list", "--system"],
             capture_output=True,
             text=True,
             env={
@@ -1203,7 +1216,7 @@ class TestCLI:
 
     def test_cli_list_search_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --search should filter by keyword."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
@@ -1216,7 +1229,7 @@ class TestCLI:
         )
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list", "--search", "git"],
+            ["python3", "core/cli.py", "list", "--search", "git"],
             capture_output=True,
             text=True,
             env={
@@ -1232,7 +1245,7 @@ class TestCLI:
 
     def test_cli_list_category_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --category should filter by category."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(
@@ -1245,7 +1258,7 @@ class TestCLI:
         )
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list", "--category", "gotcha"],
+            ["python3", "core/cli.py", "list", "--category", "gotcha"],
             capture_output=True,
             text=True,
             env={
@@ -1261,7 +1274,7 @@ class TestCLI:
 
     def test_cli_list_stale_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --stale should show only stale lessons."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         from datetime import datetime, timedelta
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1278,7 +1291,7 @@ class TestCLI:
         lessons_file.write_text(content)
 
         result = subprocess.run(
-            ["python3", "core/lessons_manager.py", "list", "--stale"],
+            ["python3", "core/cli.py", "list", "--stale"],
             capture_output=True,
             text=True,
             env={
@@ -1331,7 +1344,7 @@ class TestCaptureHook:
         assert "LESSON RECORDED" in context
 
         # Verify lesson was created with promotable=False
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         lesson = manager.get_lesson("L001")
         assert lesson is not None
@@ -1363,7 +1376,7 @@ class TestCaptureHook:
 
         assert result.returncode == 0
 
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         lesson = manager.get_lesson("L001")
         assert lesson is not None
@@ -1374,18 +1387,31 @@ class TestHookPathResolution:
     """Tests for hook Python manager path resolution."""
 
     def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_project_root: Path):
-        """Hooks should use $LESSONS_BASE/lessons_manager.py when it exists (installed mode)."""
+        """Hooks should use $LESSONS_BASE/cli.py when it exists (installed mode)."""
         import shutil
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
-        # Copy Python manager to LESSONS_BASE (simulating installed state)
-        src_manager = Path(__file__).parent.parent / "core" / "lessons_manager.py"
-        src_debug = Path(__file__).parent.parent / "core" / "debug_logger.py"
-        if not src_manager.exists():
-            pytest.skip("lessons_manager.py not found")
+        # Copy Python manager and all modules to LESSONS_BASE (simulating installed state)
+        core_dir = Path(__file__).parent.parent / "core"
+        modules = [
+            "cli.py",
+            "manager.py",
+            "debug_logger.py",
+            "models.py",
+            "parsing.py",
+            "file_lock.py",
+            "lessons.py",
+            "approaches.py",
+            "__init__.py",
+        ]
 
-        shutil.copy(src_manager, temp_lessons_base / "lessons_manager.py")
-        shutil.copy(src_debug, temp_lessons_base / "debug_logger.py")
+        if not (core_dir / "cli.py").exists():
+            pytest.skip("cli.py not found")
+
+        for module in modules:
+            src = core_dir / module
+            if src.exists():
+                shutil.copy(src, temp_lessons_base / module)
 
         # Create a lesson using the manager (ensures proper format)
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1421,7 +1447,7 @@ class TestHookPathResolution:
 
     def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_project_root: Path):
         """Hooks should fall back to dev path when installed path doesn't exist."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         # Don't copy Python manager - simulate dev environment
         hook_path = Path(__file__).parent.parent / "adapters" / "claude-code" / "inject-hook.sh"
@@ -1650,7 +1676,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_returns_result(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance returns a RelevanceResult."""
-        from core.lessons_manager import LessonsManager, RelevanceResult
+        from core import LessonsManager, RelevanceResult
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
@@ -1673,7 +1699,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_sorts_by_score(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Results are sorted by score descending."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "A lesson", "Content A")
@@ -1695,7 +1721,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_empty_lessons(self, temp_lessons_base: Path, temp_project_root: Path):
         """score_relevance with no lessons returns empty result."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         result = manager.score_relevance("test query")
@@ -1704,7 +1730,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_handles_timeout(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles timeout gracefully."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1720,7 +1746,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_handles_missing_claude(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles missing claude CLI."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1736,7 +1762,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_handles_command_failure(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles non-zero return code."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1756,7 +1782,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_clamps_scores(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Scores are clamped to 0-10 range."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1776,7 +1802,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_format_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """RelevanceResult.format() produces readable output."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
@@ -1798,7 +1824,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_handles_brackets_in_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Parser handles optional brackets in Haiku output."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Content")
@@ -1818,7 +1844,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_partial_results(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Handles when Haiku returns fewer lessons than expected."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Lesson A", "Content A")
@@ -1845,7 +1871,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_secondary_sort_by_uses(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """When scores are equal, sorts by uses descending."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Low uses", "Content A")
@@ -1872,7 +1898,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_system_lessons(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Both project (L###) and system (S###) lessons are scored."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Project lesson", "Project content")
@@ -1897,7 +1923,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_min_score_filter(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """format() with min_score filters out low-relevance lessons."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "High relevance", "Content A")
@@ -1920,7 +1946,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_min_score_no_matches(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """format() with high min_score and no matches returns message."""
-        from core.lessons_manager import LessonsManager
+        from core import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Low relevance", "Content")
@@ -1940,7 +1966,7 @@ class TestScoreRelevance:
 
     def test_score_relevance_query_truncation(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Long queries are truncated to prevent huge prompts."""
-        from core.lessons_manager import LessonsManager, SCORE_RELEVANCE_MAX_QUERY_LEN
+        from core import LessonsManager, SCORE_RELEVANCE_MAX_QUERY_LEN
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Content")

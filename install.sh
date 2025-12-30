@@ -139,12 +139,20 @@ install_core() {
     log_info "Installing core lessons manager..."
     mkdir -p "$LESSONS_BASE" "$LESSONS_BASE/plugins"
     cp "$SCRIPT_DIR/core/lessons-manager.sh" "$LESSONS_BASE/"
-    cp "$SCRIPT_DIR/core/lessons_manager.py" "$LESSONS_BASE/"
+    # Copy all Python modules (new modular structure)
+    cp "$SCRIPT_DIR/core/cli.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/manager.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/models.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/parsing.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/file_lock.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/lessons.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/approaches.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/debug_logger.py" "$LESSONS_BASE/"
+    cp "$SCRIPT_DIR/core/__init__.py" "$LESSONS_BASE/"
     cp "$SCRIPT_DIR/core/lesson-reminder-hook.sh" "$LESSONS_BASE/"
     chmod +x "$LESSONS_BASE/lessons-manager.sh" "$LESSONS_BASE/lesson-reminder-hook.sh"
     log_success "Installed lessons-manager.sh to $LESSONS_BASE/"
-    log_success "Installed lessons_manager.py to $LESSONS_BASE/"
+    log_success "Installed Python modules (cli.py, manager.py, etc.) to $LESSONS_BASE/"
     log_success "Installed lesson-reminder-hook.sh to $LESSONS_BASE/"
 
     # Install OpenCode plugin to core location (adapters will symlink/copy)
@@ -398,8 +406,18 @@ uninstall() {
 
     # Remove core (but NOT the lessons themselves)
     rm -f "$LESSONS_BASE/lessons-manager.sh"
-    rm -f "$LESSONS_BASE/lessons_manager.py"
+    # Remove all Python modules (new modular structure)
+    rm -f "$LESSONS_BASE/cli.py"
+    rm -f "$LESSONS_BASE/manager.py"
+    rm -f "$LESSONS_BASE/models.py"
+    rm -f "$LESSONS_BASE/parsing.py"
+    rm -f "$LESSONS_BASE/file_lock.py"
+    rm -f "$LESSONS_BASE/lessons.py"
+    rm -f "$LESSONS_BASE/approaches.py"
     rm -f "$LESSONS_BASE/debug_logger.py"
+    rm -f "$LESSONS_BASE/__init__.py"
+    # Remove old monolithic file if it exists
+    rm -f "$LESSONS_BASE/lessons_manager.py"
     rm -f "$LESSONS_BASE/lesson-reminder-hook.sh"
     rm -f "$LESSONS_BASE/.reminder-state"
     rm -rf "$LESSONS_BASE/plugins"

@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Data models for the lessons manager.
+
+Contains all dataclasses, enums, and constants used by the lessons system.
+"""
+
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from enum import Enum
+from typing import List, Optional
+
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+SYSTEM_PROMOTION_THRESHOLD = 50
+STALE_DAYS_DEFAULT = 60
+MAX_USES = 100
+ROBOT_EMOJI = "\U0001f916"  # Robot emoji for AI lessons
+
+# Velocity decay constants
+VELOCITY_DECAY_FACTOR = 0.5  # 50% half-life per decay cycle
+VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
+
+# Approach visibility constants
+APPROACH_MAX_COMPLETED = 3  # Keep last N completed approaches visible
+APPROACH_MAX_AGE_DAYS = 7  # Or completed within N days
+
+# Relevance scoring constants
+SCORE_RELEVANCE_TIMEOUT = 30  # Default timeout for Haiku call
+SCORE_RELEVANCE_MAX_QUERY_LEN = 5000  # Truncate query to prevent huge prompts
+
+# Regex patterns for parsing lessons
+LESSON_HEADER_PATTERN = re.compile(
+    r"^###\s*\[([LS]\d{3})\]\s*\[([^\]]+)\]\s*(.+)$"
+)
+# Support both old format (/) and new format (|)
+LESSON_HEADER_PATTERN_FLEXIBLE = re.compile(
+    r"^###\s*\[([LS]\d{3})\]\s*\[([*+\-|/\ ]+)\]\s*(.*)$"
+)
+METADATA_PATTERN = re.compile(
+    r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
+    r"(?:\s*\|\s*\*\*Velocity\*\*:\s*([\d.]+))?"
+    r"\s*\|\s*\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})"
+    r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
+    r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
+    r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
+)
+CONTENT_PATTERN = re.compile(r"^>\s*(.*)$")
+
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+
+class LessonLevel(str, Enum):
+    """Lesson scope level."""
+    PROJECT = "project"
+    SYSTEM = "system"
+
+
+class LessonCategory(str, Enum):
+    """Lesson category types."""
+    PATTERN = "pattern"
+    CORRECTION = "correction"
+    DECISION = "decision"
+    GOTCHA = "gotcha"
+    PREFERENCE = "preference"
+
+
+# =============================================================================
+# Data Classes
+# =============================================================================
+
+
+@dataclass
+class Lesson:
+    """Represents a single lesson entry."""
+    id: str
+    title: str
+    content: str
+    uses: int
+    velocity: float
+    learned: date
+    last_used: date
+    category: str
+    source: str = "human"  # 'human' or 'ai'
+    level: str = "project"  # 'project' or 'system'
+    promotable: bool = True  # False = never promote to system level
+
+    @property
+    def tokens(self) -> int:
+        """Estimate token count for this lesson (title + content)."""
+        # Rough estimate: ~4 characters per token for English text
+        # Add some overhead for formatting (metadata, markdown, etc.)
+        text_length = len(self.title) + len(self.content)
+        overhead = 20  # Approximate overhead for ID, rating, category, etc.
+        return (text_length // 4) + overhead
+
+    def is_stale(self, stale_days: int = STALE_DAYS_DEFAULT) -> bool:
+        """Check if the lesson is stale (not cited in stale_days)."""
+        days_since = (date.today() - self.last_used).days
+        return days_since >= stale_days
+
+
+@dataclass
+class LessonRating:
+    """Lesson rating display using star emojis."""
+    uses: int
+    velocity: float  # Kept for backward compatibility but not displayed
+
+    def format(self) -> str:
+        """Format the rating as emoji stars (uses only)."""
+        return self._uses_to_emoji_stars()
+
+    def format_legacy(self) -> str:
+        """Format the rating as [total|velocity] for file storage."""
+        left = self._uses_to_ascii_stars()
+        right = self._velocity_to_indicator()
+        return f"[{left}|{right}]"
+
+    def _uses_to_emoji_stars(self) -> str:
+        """Convert uses to emoji star scale (1-5 stars)."""
+        # 1-2=★, 3-5=★★, 6-12=★★★, 13-30=★★★★, 31+=★★★★★
+        filled = "★"
+        empty = "☆"
+        if self.uses >= 31:
+            count = 5
+        elif self.uses >= 13:
+            count = 4
+        elif self.uses >= 6:
+            count = 3
+        elif self.uses >= 3:
+            count = 2
+        elif self.uses >= 1:
+            count = 1
+        else:
+            count = 0
+        return filled * count + empty * (5 - count)
+
+    def _uses_to_ascii_stars(self) -> str:
+        """Convert uses to ASCII star scale for file storage."""
+        # 1-2=*, 3-5=**, 6-12=***, 13-30=****, 31+=*****
+        if self.uses >= 31:
+            return "*****"
+        elif self.uses >= 13:
+            return "****-"
+        elif self.uses >= 6:
+            return "***--"
+        elif self.uses >= 3:
+            return "**---"
+        elif self.uses >= 1:
+            return "*----"
+        else:
+            return "-----"
+
+    def _velocity_to_indicator(self) -> str:
+        """Convert velocity to activity indicator for file storage."""
+        if self.velocity >= 4.5:
+            return "****+"
+        elif self.velocity >= 3.5:
+            return "***--"
+        elif self.velocity >= 2.5:
+            return "**---"
+        elif self.velocity >= 1.5:
+            return "*----"
+        elif self.velocity >= 0.5:
+            return "+----"
+        else:
+            return "-----"
+
+    @staticmethod
+    def calculate(uses: int, velocity: float) -> str:
+        """Static method to calculate rating string."""
+        return LessonRating(uses=uses, velocity=velocity).format()
+
+
+@dataclass
+class CitationResult:
+    """Result of citing a lesson."""
+    success: bool
+    lesson_id: str
+    uses: int
+    velocity: float
+    promotion_ready: bool = False
+    message: str = ""
+
+
+@dataclass
+class InjectionResult:
+    """Result of context injection."""
+    top_lessons: List[Lesson]
+    all_lessons: List[Lesson]
+    total_count: int
+    system_count: int
+    project_count: int
+
+    def format(self) -> str:
+        """Format injection result for display (condensed format)."""
+        if not self.all_lessons:
+            return ""
+
+        # Calculate total tokens
+        total_tokens = sum(lesson.tokens for lesson in self.all_lessons)
+
+        lines = [
+            f"LESSONS ({self.system_count}S, {self.project_count}L | ~{total_tokens:,} tokens)"
+        ]
+
+        # Top lessons - inline format with content preview
+        for lesson in self.top_lessons:
+            rating = LessonRating.calculate(lesson.uses, lesson.velocity)
+            prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+            # Truncate content to ~60 chars
+            content_preview = lesson.content[:60] + "..." if len(lesson.content) > 60 else lesson.content
+            lines.append(f"  [{lesson.id}] {rating} {prefix}{lesson.title} - {content_preview}")
+
+        # Other lessons - compact single line with | separator
+        remaining = [l for l in self.all_lessons if l not in self.top_lessons]
+        if remaining:
+            other_items = []
+            for lesson in remaining:
+                prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+                other_items.append(f"[{lesson.id}] {prefix}{lesson.title}")
+            lines.append("  " + " | ".join(other_items))
+
+        # Simplified footer
+        lines.append("Cite [ID] when applying. LESSON: to add.")
+
+        return "\n".join(lines)
+
+
+@dataclass
+class DecayResult:
+    """Result of decay operation."""
+    decayed_uses: int
+    decayed_velocity: int
+    sessions_since_last: int
+    skipped: bool = False
+    message: str = ""
+
+
+@dataclass
+class TriedApproach:
+    """Represents a tried approach within an Approach."""
+    outcome: str  # success|fail|partial
+    description: str
+
+
+@dataclass
+class Approach:
+    """Represents an active approach being tracked."""
+    id: str
+    title: str
+    status: str  # not_started|in_progress|blocked|completed
+    created: date
+    updated: date
+    description: str = ""
+    next_steps: str = ""
+    phase: str = "research"  # research|planning|implementing|review
+    agent: str = "user"  # explore|general-purpose|plan|review|user
+    files: List[str] = field(default_factory=list)
+    tried: List[TriedApproach] = field(default_factory=list)
+    checkpoint: str = ""  # Progress summary from PreCompact hook
+    last_session: Optional[date] = None  # When checkpoint was last updated
+
+
+@dataclass
+class ApproachCompleteResult:
+    """Result of completing an approach."""
+    approach: Approach
+    extraction_prompt: str
+
+
+@dataclass
+class ScoredLesson:
+    """A lesson with a relevance score."""
+    lesson: Lesson
+    score: int  # 0-10 relevance score
+
+
+@dataclass
+class RelevanceResult:
+    """Result of relevance scoring."""
+    scored_lessons: List[ScoredLesson]
+    query_text: str
+    error: Optional[str] = None
+
+    def format(self, top_n: int = 10, min_score: int = 0) -> str:
+        """Format scored lessons for display.
+
+        Args:
+            top_n: Maximum number of lessons to show
+            min_score: Minimum relevance score to include (0-10)
+        """
+        if self.error:
+            return f"Error: {self.error}"
+        if not self.scored_lessons:
+            return "(no lessons to score)"
+
+        # Filter by min_score, then take top_n
+        filtered = [sl for sl in self.scored_lessons if sl.score >= min_score]
+        if not filtered:
+            return f"(no lessons with relevance >= {min_score})"
+
+        lines = []
+        for sl in filtered[:top_n]:
+            rating = LessonRating.calculate(sl.lesson.uses, sl.lesson.velocity)
+            prefix = f"{ROBOT_EMOJI} " if sl.lesson.source == "ai" else ""
+            lines.append(f"[{sl.lesson.id}] {rating} (relevance: {sl.score}/10) {prefix}{sl.lesson.title}")
+            lines.append(f"    -> {sl.lesson.content}")
+        return "\n".join(lines)

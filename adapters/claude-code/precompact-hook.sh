@@ -13,11 +13,11 @@ set -uo pipefail
 
 LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/lessons_manager.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/lessons_manager.py"
+if [[ -f "$LESSONS_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 
 # Maximum messages to include in summary prompt

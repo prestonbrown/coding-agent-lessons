@@ -11,11 +11,11 @@ set -uo pipefail
 LESSONS_BASE="${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}"
 BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/lessons_manager.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/lessons_manager.py"
+if [[ -f "$LESSONS_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/lessons_manager.py"
+    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 STATE_DIR="$LESSONS_BASE/.citation-state"
 
@@ -377,6 +377,53 @@ process_approaches() {
     (( processed_count > 0 )) && echo "[approaches] $processed_count approach command(s) processed" >&2
 }
 
+# Capture TodoWrite tool calls and sync to approaches
+# This bridges ephemeral TodoWrite with persistent APPROACHES.md
+# - completed todos -> tried entries (success)
+# - in_progress todo -> checkpoint
+# - pending todos -> next_steps
+capture_todowrite() {
+    local transcript_path="$1"
+    local project_root="$2"
+    local last_timestamp="$3"
+
+    # Extract the LAST TodoWrite tool_use block from assistant messages
+    # We want the final state, not intermediate states
+    local todo_json=""
+    if [[ -z "$last_timestamp" ]]; then
+        todo_json=$(jq -r '
+            select(.type == "assistant") |
+            .message.content[]? |
+            select(.type == "tool_use" and .name == "TodoWrite") |
+            .input.todos' "$transcript_path" 2>/dev/null | tail -1 || true)
+    else
+        todo_json=$(jq -r --arg ts "$last_timestamp" '
+            select(.type == "assistant" and .timestamp > $ts) |
+            .message.content[]? |
+            select(.type == "tool_use" and .name == "TodoWrite") |
+            .input.todos' "$transcript_path" 2>/dev/null | tail -1 || true)
+    fi
+
+    # Skip if no TodoWrite calls or empty/null result
+    [[ -z "$todo_json" || "$todo_json" == "null" ]] && return 0
+
+    # Validate it's a JSON array
+    if ! echo "$todo_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Call Python manager to sync todos to approach
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        local result
+        result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
+
+        if [[ -n "$result" && "$result" != Error:* ]]; then
+            echo "[approaches] Synced TodoWrite to approach" >&2
+        fi
+    fi
+}
+
 main() {
     is_enabled || exit 0
 
@@ -407,6 +454,9 @@ main() {
 
     # Process APPROACH: patterns (approach tracking and plan mode)
     process_approaches "$transcript_path" "$project_root" "$last_timestamp"
+
+    # Capture TodoWrite tool calls and sync to approaches
+    capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
 
     # Process entries newer than checkpoint
     # Filter by timestamp, extract citations from assistant messages
