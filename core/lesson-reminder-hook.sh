@@ -54,6 +54,14 @@ if [[ -n "$HIGH_STAR" ]]; then
   echo "📚 LESSON CHECK - High-priority lessons to keep in mind:"
   echo "$HIGH_STAR"
   echo ""
+
+  # Log reminded lessons for effectiveness tracking (if debug enabled)
+  if [[ "${LESSONS_DEBUG:-0}" -ge 1 ]]; then
+    DEBUG_LOG="$HOME/.config/coding-agent-lessons/debug.log"
+    LESSON_IDS=$(echo "$HIGH_STAR" | grep -oE '\[[LS][0-9]+\]' | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
+    TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "{\"timestamp\":\"$TIMESTAMP\",\"event\":\"reminder\",\"lesson_ids\":\"$LESSON_IDS\",\"prompt_count\":$COUNT}" >> "$DEBUG_LOG"
+  fi
 fi
 
 exit 0

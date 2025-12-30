@@ -1372,6 +1372,206 @@ class TestCaptureHook:
         assert lesson.promotable is True
 
 
+class TestReminderHook:
+    """Tests for lesson-reminder-hook.sh config and logging."""
+
+    @pytest.fixture
+    def hook_path(self):
+        """Get absolute path to reminder hook."""
+        path = Path(__file__).parent.parent / "core" / "lesson-reminder-hook.sh"
+        if not path.exists():
+            pytest.skip("lesson-reminder-hook.sh not found")
+        return path
+
+    def test_reminder_reads_config_file(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+        """Reminder hook reads remindEvery from config file."""
+        import subprocess
+        import json
+
+        # Create config with custom remindEvery
+        config_dir = tmp_path / ".claude"
+        config_dir.mkdir()
+        config_file = config_dir / "settings.json"
+        config_file.write_text(json.dumps({
+            "lessonsSystem": {"enabled": True, "remindEvery": 3}
+        }))
+
+        # Create state file at count 2 (next will be 3, triggering reminder)
+        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / ".reminder-state").write_text("2")
+
+        # Create a lessons file with high-star lesson
+        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir.mkdir(exist_ok=True)
+        (lessons_dir / "LESSONS.md").write_text(
+            "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(temp_project_root),
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "LESSONS_BASE": str(temp_lessons_base),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "LESSON CHECK" in result.stdout
+        assert "L001" in result.stdout
+
+    def test_reminder_env_var_overrides_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+        """LESSON_REMIND_EVERY env var takes precedence over config."""
+        import subprocess
+        import json
+
+        # Config says remind every 100
+        config_dir = tmp_path / ".claude"
+        config_dir.mkdir()
+        (config_dir / "settings.json").write_text(json.dumps({
+            "lessonsSystem": {"remindEvery": 100}
+        }))
+
+        # State at count 4, env says remind every 5
+        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / ".reminder-state").write_text("4")
+
+        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir.mkdir(exist_ok=True)
+        (lessons_dir / "LESSONS.md").write_text(
+            "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(temp_project_root),
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "LESSON_REMIND_EVERY": "5",  # Override config
+                "LESSONS_BASE": str(temp_lessons_base),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "LESSON CHECK" in result.stdout  # Triggered because 5 % 5 == 0
+
+    def test_reminder_default_when_no_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+        """Default remindEvery=12 when no config file exists."""
+        import subprocess
+
+        # No config file, state at 11
+        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / ".reminder-state").write_text("11")
+
+        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir.mkdir(exist_ok=True)
+        (lessons_dir / "LESSONS.md").write_text(
+            "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(temp_project_root),
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "LESSONS_BASE": str(temp_lessons_base),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "LESSON CHECK" in result.stdout  # Count 12, default reminder
+
+    def test_reminder_logs_when_debug_enabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+        """Reminder logs to debug.log when LESSONS_DEBUG>=1."""
+        import subprocess
+        import json
+
+        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / ".reminder-state").write_text("11")
+
+        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir.mkdir(exist_ok=True)
+        (lessons_dir / "LESSONS.md").write_text(
+            "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
+            "### [S002] [****-|-----] System Lesson\n- Content\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(temp_project_root),
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "LESSONS_BASE": str(temp_lessons_base),
+                "LESSONS_DEBUG": "1",
+            },
+        )
+
+        assert result.returncode == 0
+        assert "LESSON CHECK" in result.stdout
+
+        # Check debug log was created
+        debug_log = state_dir / "debug.log"
+        assert debug_log.exists()
+
+        log_content = debug_log.read_text()
+        log_entry = json.loads(log_content.strip())
+        assert log_entry["event"] == "reminder"
+        assert "L001" in log_entry["lesson_ids"]
+        assert log_entry["prompt_count"] == 12
+
+    def test_reminder_no_log_when_debug_disabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+        """No debug log when LESSONS_DEBUG is not set."""
+        import subprocess
+
+        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / ".reminder-state").write_text("11")
+
+        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir.mkdir(exist_ok=True)
+        (lessons_dir / "LESSONS.md").write_text(
+            "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
+        )
+
+        # Build env without LESSONS_DEBUG
+        env = {k: v for k, v in os.environ.items() if k != "LESSONS_DEBUG"}
+        env.update({
+            "HOME": str(tmp_path),
+            "LESSONS_BASE": str(temp_lessons_base),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(temp_project_root),
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "LESSON CHECK" in result.stdout
+
+        # Debug log should not exist
+        debug_log = state_dir / "debug.log"
+        assert not debug_log.exists()
+
+
 class TestScoreRelevance:
     """Tests for relevance scoring with Haiku."""
 
