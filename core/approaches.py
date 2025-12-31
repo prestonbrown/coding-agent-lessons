@@ -19,6 +19,7 @@ try:
         # Constants
         APPROACH_MAX_COMPLETED,
         APPROACH_MAX_AGE_DAYS,
+        APPROACH_STALE_DAYS,
         # Dataclasses
         TriedApproach,
         Approach,
@@ -31,6 +32,7 @@ except ImportError:
         # Constants
         APPROACH_MAX_COMPLETED,
         APPROACH_MAX_AGE_DAYS,
+        APPROACH_STALE_DAYS,
         # Dataclasses
         TriedApproach,
         Approach,
@@ -815,8 +817,61 @@ Consider extracting lessons about:
 
             self._write_approaches_file(approaches)
 
-        logger = get_logger()
-        logger.mutation("delete_approach", approach_id)
+    def _archive_stale_approaches(self) -> List[str]:
+        """
+        Auto-archive active approaches that haven't been updated in APPROACH_STALE_DAYS.
+
+        Returns:
+            List of archived approach IDs
+        """
+        cutoff = date.today() - timedelta(days=APPROACH_STALE_DAYS)
+        archived_ids = []
+
+        with FileLock(self.project_approaches_file):
+            if not self.project_approaches_file.exists():
+                return []
+
+            approaches = self._parse_approaches_file(self.project_approaches_file)
+            stale = []
+            remaining = []
+
+            for approach in approaches:
+                # Only archive active (non-completed) approaches that are stale
+                if approach.status != "completed" and approach.updated < cutoff:
+                    # Add stale note to description
+                    stale_note = f"[Auto-archived: stale after {APPROACH_STALE_DAYS} days]"
+                    if approach.description:
+                        approach.description = f"{stale_note} {approach.description}"
+                    else:
+                        approach.description = stale_note
+                    stale.append(approach)
+                    archived_ids.append(approach.id)
+                else:
+                    remaining.append(approach)
+
+            if not stale:
+                return []
+
+            # Archive stale approaches
+            archive_file = self.project_approaches_archive
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if archive_file.exists():
+                archive_content = archive_file.read_text()
+            else:
+                archive_content = """# APPROACHES_ARCHIVE.md - Archived Approaches
+
+> Previously completed or archived approaches.
+
+"""
+
+            for approach in stale:
+                archive_content += "\n" + self._format_approach(approach) + "\n"
+
+            archive_file.write_text(archive_content)
+            self._write_approaches_file(remaining)
+
+        return archived_ids
 
     def approach_get(self, approach_id: str) -> Optional[Approach]:
         """
@@ -934,6 +989,9 @@ Consider extracting lessons about:
         Returns:
             Formatted string for context injection, empty if no approaches
         """
+        # Auto-archive stale approaches before listing
+        self._archive_stale_approaches()
+
         active_approaches = self.approach_list(include_completed=False)
         completed_approaches = self.approach_list_completed(
             max_count=max_completed,

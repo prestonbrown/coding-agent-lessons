@@ -2350,5 +2350,98 @@ class TestTodoSyncRoundTrip:
         assert "completed" not in json_str  # Not in the JSON
 
 
+class TestStaleApproachArchival:
+    """Tests for auto-archiving stale approaches."""
+
+    def test_stale_approach_archived_on_inject(self, manager: LessonsManager) -> None:
+        """Approaches untouched for >7 days are auto-archived during inject."""
+        from datetime import timedelta
+
+        # Create an approach and backdate it to 8 days ago
+        manager.approach_add(title="Old task", desc="Started long ago")
+
+        # Manually update the approach's updated date to be stale
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=8)
+        manager._write_approaches_file(approaches)
+
+        # Inject should auto-archive the stale approach
+        result = manager.approach_inject()
+
+        # Should not appear in active approaches
+        assert "Old task" not in result or "Auto-archived" in result
+
+        # Should be in archive with stale note
+        archive_content = manager.project_approaches_archive.read_text()
+        assert "Old task" in archive_content
+        assert "Auto-archived" in archive_content
+
+    def test_approach_exactly_7_days_not_archived(self, manager: LessonsManager) -> None:
+        """Approaches exactly 7 days old are NOT archived (need >7 days)."""
+        from datetime import timedelta
+
+        manager.approach_add(title="Week old task")
+
+        # Set to exactly 7 days ago
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=7)
+        manager._write_approaches_file(approaches)
+
+        result = manager.approach_inject()
+
+        # Should still appear in active approaches
+        assert "Week old task" in result
+        assert "Active Approaches" in result
+
+    def test_completed_approach_not_stale_archived(self, manager: LessonsManager) -> None:
+        """Completed approaches are handled by different rules, not stale archival."""
+        from datetime import timedelta
+
+        manager.approach_add(title="Finished task")
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].status = "completed"
+        approaches[0].updated = date.today() - timedelta(days=8)
+        manager._write_approaches_file(approaches)
+
+        # This should NOT be archived by stale logic (completed has own rules)
+        archived = manager._archive_stale_approaches()
+        assert len(archived) == 0
+
+    def test_stale_archival_returns_archived_ids(self, manager: LessonsManager) -> None:
+        """_archive_stale_approaches returns list of archived approach IDs."""
+        from datetime import timedelta
+
+        manager.approach_add(title="Stale 1")
+        manager.approach_add(title="Stale 2")
+        manager.approach_add(title="Fresh")
+
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=10)
+        approaches[1].updated = date.today() - timedelta(days=8)
+        # approaches[2] stays fresh (today)
+        manager._write_approaches_file(approaches)
+
+        archived = manager._archive_stale_approaches()
+
+        assert len(archived) == 2
+        assert approaches[0].id in archived
+        assert approaches[1].id in archived
+
+    def test_no_stale_approaches_no_changes(self, manager: LessonsManager) -> None:
+        """When no approaches are stale, files are not modified."""
+        manager.approach_add(title="Fresh task")
+
+        # Get original content
+        original_content = manager.project_approaches_file.read_text()
+
+        archived = manager._archive_stale_approaches()
+
+        assert len(archived) == 0
+        # Archive file should not be created
+        assert not manager.project_approaches_archive.exists()
+        # Main file unchanged (content-wise, though timestamps may differ)
+        assert "Fresh task" in manager.project_approaches_file.read_text()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
