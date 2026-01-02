@@ -30,6 +30,7 @@ VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
 APPROACH_MAX_COMPLETED = 3  # Keep last N completed approaches visible
 APPROACH_MAX_AGE_DAYS = 7  # Or completed within N days
 APPROACH_STALE_DAYS = 7  # Auto-archive active approaches untouched for N days
+APPROACH_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed approaches after N days
 
 # Relevance scoring constants
 SCORE_RELEVANCE_TIMEOUT = 30  # Default timeout for Haiku call

@@ -20,6 +20,7 @@ try:
         APPROACH_MAX_COMPLETED,
         APPROACH_MAX_AGE_DAYS,
         APPROACH_STALE_DAYS,
+        APPROACH_COMPLETED_ARCHIVE_DAYS,
         # Dataclasses
         TriedApproach,
         Approach,
@@ -33,6 +34,7 @@ except ImportError:
         APPROACH_MAX_COMPLETED,
         APPROACH_MAX_AGE_DAYS,
         APPROACH_STALE_DAYS,
+        APPROACH_COMPLETED_ARCHIVE_DAYS,
         # Dataclasses
         TriedApproach,
         Approach,
@@ -537,6 +539,21 @@ class ApproachesMixin:
             new_value=agent,
         )
 
+    # Patterns that indicate work is complete (must be at start, case-insensitive)
+    COMPLETION_PATTERNS = ("final", "done", "complete", "finished")
+
+    # Keywords that indicate implementing phase (case-insensitive)
+    IMPLEMENTING_KEYWORDS = (
+        "implement", "build", "create", "add", "fix", "write", "update",
+        "refactor", "remove", "delete", "rename", "move", "extract",
+    )
+
+    # Phases that should not be changed by auto-update (already past implementing)
+    PROTECTED_PHASES = ("implementing", "review")
+
+    # Number of successful steps that triggers auto-bump to implementing
+    IMPLEMENTING_STEP_THRESHOLD = 10
+
     def approach_add_tried(
         self,
         approach_id: str,
@@ -545,6 +562,13 @@ class ApproachesMixin:
     ) -> None:
         """
         Add a tried approach.
+
+        Auto-completes approach if description starts with a completion pattern
+        (e.g., "Final commit", "Done", "Finished") and outcome is "success".
+
+        Auto-updates phase to "implementing" if:
+        - Description contains implementing keywords (implement, build, create, etc.)
+        - OR there are 10+ successful tried steps
 
         Args:
             approach_id: The approach ID
@@ -568,6 +592,34 @@ class ApproachesMixin:
                         description=description,
                     ))
                     approach.updated = date.today()
+
+                    # Auto-complete on final pattern with success outcome
+                    if outcome == "success":
+                        desc_lower = description.lower().strip()
+                        if any(desc_lower.startswith(p) for p in self.COMPLETION_PATTERNS):
+                            approach.status = "completed"
+                            approach.phase = "review"
+
+                    # Auto-update phase to implementing (if not already in a later phase)
+                    if approach.phase not in self.PROTECTED_PHASES:
+                        should_bump = False
+
+                        # Check for implementing keywords in description
+                        desc_lower = description.lower()
+                        if any(kw in desc_lower for kw in self.IMPLEMENTING_KEYWORDS):
+                            should_bump = True
+
+                        # Check for 10+ successful steps
+                        if not should_bump:
+                            success_count = sum(
+                                1 for t in approach.tried if t.outcome == "success"
+                            )
+                            if success_count >= self.IMPLEMENTING_STEP_THRESHOLD:
+                                should_bump = True
+
+                        if should_bump:
+                            approach.phase = "implementing"
+
                     found = True
                     break
 
@@ -873,6 +925,57 @@ Consider extracting lessons about:
 
         return archived_ids
 
+    def _archive_old_completed_approaches(self) -> List[str]:
+        """
+        Auto-archive completed approaches older than APPROACH_COMPLETED_ARCHIVE_DAYS.
+
+        Returns:
+            List of archived approach IDs
+        """
+        cutoff = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS)
+        archived_ids = []
+
+        with FileLock(self.project_approaches_file):
+            if not self.project_approaches_file.exists():
+                return []
+
+            approaches = self._parse_approaches_file(self.project_approaches_file)
+
+            old_completed = []
+            remaining = []
+
+            for approach in approaches:
+                # Only archive completed approaches older than cutoff
+                if approach.status == "completed" and approach.updated < cutoff:
+                    old_completed.append(approach)
+                    archived_ids.append(approach.id)
+                else:
+                    remaining.append(approach)
+
+            if not old_completed:
+                return []
+
+            # Archive old completed approaches
+            archive_file = self.project_approaches_archive
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if archive_file.exists():
+                archive_content = archive_file.read_text()
+            else:
+                archive_content = """# APPROACHES_ARCHIVE.md - Archived Approaches
+
+> Previously completed or archived approaches.
+
+"""
+
+            for approach in old_completed:
+                archive_content += "\n" + self._format_approach(approach) + "\n"
+
+            archive_file.write_text(archive_content)
+            self._write_approaches_file(remaining)
+
+        return archived_ids
+
     def approach_get(self, approach_id: str) -> Optional[Approach]:
         """
         Get an approach by ID.
@@ -989,8 +1092,9 @@ Consider extracting lessons about:
         Returns:
             Formatted string for context injection, empty if no approaches
         """
-        # Auto-archive stale approaches before listing
+        # Auto-archive stale and old completed approaches before listing
         self._archive_stale_approaches()
+        self._archive_old_completed_approaches()
 
         active_approaches = self.approach_list(include_completed=False)
         completed_approaches = self.approach_list_completed(

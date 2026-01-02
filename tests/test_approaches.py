@@ -2268,14 +2268,14 @@ class TestApproachInjectTodos:
     def test_inject_formats_approach_as_todos(self, manager: LessonsManager) -> None:
         """inject_todos formats approach state as todo list."""
         approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Completed task")
+        manager.approach_add_tried(approach_id, "success", "First task succeeded")
         manager.approach_update_checkpoint(approach_id, "Current task")
         manager.approach_update_next(approach_id, "Next task")
 
         result = manager.approach_inject_todos()
 
         assert "CONTINUE PREVIOUS WORK" in result
-        assert "Completed task" in result
+        assert "First task succeeded" in result
         assert "Current task" in result
         assert "Next task" in result
         assert "```json" in result
@@ -2283,7 +2283,7 @@ class TestApproachInjectTodos:
     def test_inject_shows_status_icons(self, manager: LessonsManager) -> None:
         """inject_todos uses status icons for visual clarity."""
         approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Done")
+        manager.approach_add_tried(approach_id, "success", "Succeeded")
         manager.approach_update_checkpoint(approach_id, "Doing")
         manager.approach_update_next(approach_id, "Todo")
 
@@ -2298,7 +2298,7 @@ class TestApproachInjectTodos:
         import json
 
         approach_id = manager.approach_add("Test approach")
-        manager.approach_add_tried(approach_id, "success", "Done task")
+        manager.approach_add_tried(approach_id, "success", "Succeeded task")
         manager.approach_update_checkpoint(approach_id, "Current task")
 
         result = manager.approach_inject_todos()
@@ -2441,6 +2441,339 @@ class TestStaleApproachArchival:
         assert not manager.project_approaches_archive.exists()
         # Main file unchanged (content-wise, though timestamps may differ)
         assert "Fresh task" in manager.project_approaches_file.read_text()
+
+
+class TestCompletedApproachArchival:
+    """Tests for auto-archiving completed approaches after N days."""
+
+    def test_completed_approach_archived_after_days(self, manager: LessonsManager) -> None:
+        """Completed approaches are archived after APPROACH_COMPLETED_ARCHIVE_DAYS."""
+        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+
+        manager.approach_add(title="Finished work")
+        manager.approach_complete("A001")
+
+        # Backdate the completed approach
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
+        manager._write_approaches_file(approaches)
+
+        # Trigger archival via inject
+        manager.approach_inject()
+
+        # Should be archived
+        archive_content = manager.project_approaches_archive.read_text()
+        assert "Finished work" in archive_content
+
+        # Should not be in active list
+        active = manager.approach_list(include_completed=True)
+        assert len(active) == 0
+
+    def test_completed_approach_at_threshold_not_archived(self, manager: LessonsManager) -> None:
+        """Completed approaches exactly at threshold are NOT archived."""
+        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+
+        manager.approach_add(title="Just finished")
+        manager.approach_complete("A001")
+
+        # Set to exactly at threshold
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS)
+        manager._write_approaches_file(approaches)
+
+        archived = manager._archive_old_completed_approaches()
+
+        assert len(archived) == 0
+        # Should still be in active
+        active = manager.approach_list(include_completed=True)
+        assert len(active) == 1
+
+    def test_fresh_completed_not_archived(self, manager: LessonsManager) -> None:
+        """Recently completed approaches stay in active for visibility."""
+        manager.approach_add(title="Just done")
+        manager.approach_complete("A001")
+
+        archived = manager._archive_old_completed_approaches()
+
+        assert len(archived) == 0
+        # Should show in completed list
+        completed = manager.approach_list_completed()
+        assert len(completed) == 1
+
+    def test_stale_and_completed_archived_separately(self, manager: LessonsManager) -> None:
+        """Both stale active and old completed get archived."""
+        from core.models import APPROACH_STALE_DAYS, APPROACH_COMPLETED_ARCHIVE_DAYS
+
+        # Create stale active approach
+        manager.approach_add(title="Stale active")
+        # Create old completed approach
+        manager.approach_add(title="Old completed")
+        manager.approach_complete("A002")
+
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=APPROACH_STALE_DAYS + 1)
+        approaches[1].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
+        manager._write_approaches_file(approaches)
+
+        # Inject triggers both
+        manager.approach_inject()
+
+        archive_content = manager.project_approaches_archive.read_text()
+        assert "Stale active" in archive_content
+        assert "Old completed" in archive_content
+
+        # Both should be gone from active
+        active = manager.approach_list(include_completed=True)
+        assert len(active) == 0
+
+    def test_archive_old_completed_returns_ids(self, manager: LessonsManager) -> None:
+        """_archive_old_completed_approaches returns list of archived IDs."""
+        from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
+
+        manager.approach_add(title="Old 1")
+        manager.approach_add(title="Old 2")
+        manager.approach_add(title="Fresh")
+        manager.approach_complete("A001")
+        manager.approach_complete("A002")
+        manager.approach_complete("A003")
+
+        approaches = manager._parse_approaches_file(manager.project_approaches_file)
+        approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 2)
+        approaches[1].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
+        # A003 stays fresh
+        manager._write_approaches_file(approaches)
+
+        archived = manager._archive_old_completed_approaches()
+
+        assert len(archived) == 2
+        assert "A001" in archived
+        assert "A002" in archived
+        assert "A003" not in archived
+
+
+class TestAutoCompleteOnFinalPattern:
+    """Tests for auto-completing approaches when tried step matches 'final' patterns."""
+
+    def test_tried_with_final_commit_autocompletes(self, manager: LessonsManager) -> None:
+        """Adding tried step with 'Final report and commit' marks approach complete."""
+        manager.approach_add(title="Feature work")
+
+        manager.approach_add_tried("A001", "success", "Final report and commit")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_tried_with_final_review_autocompletes(self, manager: LessonsManager) -> None:
+        """Adding tried step with 'Final review' marks approach complete."""
+        manager.approach_add(title="Bug fix")
+
+        manager.approach_add_tried("A001", "success", "Final review and merge")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_final_pattern_case_insensitive(self, manager: LessonsManager) -> None:
+        """Final pattern matching is case insensitive."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "success", "FINAL COMMIT")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_final_pattern_requires_success(self, manager: LessonsManager) -> None:
+        """Only successful 'final' steps trigger auto-complete."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "fail", "Final commit failed")
+
+        approach = manager.approach_get("A001")
+        assert approach.status != "completed"
+
+    def test_final_pattern_partial_does_not_complete(self, manager: LessonsManager) -> None:
+        """Partial outcome with 'final' does not trigger auto-complete."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "partial", "Final steps started")
+
+        approach = manager.approach_get("A001")
+        assert approach.status != "completed"
+
+    def test_word_final_in_middle_does_not_trigger(self, manager: LessonsManager) -> None:
+        """'Final' must be at start of description to trigger."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "success", "Updated the final configuration")
+
+        approach = manager.approach_get("A001")
+        assert approach.status != "completed"
+
+    def test_done_pattern_autocompletes(self, manager: LessonsManager) -> None:
+        """'Done' at start also triggers auto-complete."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "success", "Done - all tests passing")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_complete_pattern_autocompletes(self, manager: LessonsManager) -> None:
+        """'Complete' at start also triggers auto-complete."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "success", "Complete implementation merged")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_finished_pattern_autocompletes(self, manager: LessonsManager) -> None:
+        """'Finished' at start also triggers auto-complete."""
+        manager.approach_add(title="Task")
+
+        manager.approach_add_tried("A001", "success", "Finished all tasks")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+
+    def test_autocomplete_sets_phase_to_review(self, manager: LessonsManager) -> None:
+        """Auto-completed approaches get phase set to 'review'."""
+        manager.approach_add(title="Task")
+        manager.approach_update_phase("A001", "implementing")
+
+        manager.approach_add_tried("A001", "success", "Final commit")
+
+        approach = manager.approach_get("A001")
+        assert approach.status == "completed"
+        assert approach.phase == "review"
+
+
+class TestAutoPhaseUpdate:
+    """Tests for auto-updating phase based on tried steps."""
+
+    def test_implement_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step containing 'implement' bumps phase to implementing."""
+        manager.approach_add(title="Feature")
+        approach = manager.approach_get("A001")
+        assert approach.phase == "research"  # Default
+
+        manager.approach_add_tried("A001", "success", "Implement the core logic")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_build_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step containing 'build' bumps phase to implementing."""
+        manager.approach_add(title="Feature")
+
+        manager.approach_add_tried("A001", "success", "Build the component")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_create_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step containing 'create' bumps phase to implementing."""
+        manager.approach_add(title="Feature")
+
+        manager.approach_add_tried("A001", "success", "Create new module")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_add_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step starting with 'Add' bumps phase to implementing."""
+        manager.approach_add(title="Feature")
+
+        manager.approach_add_tried("A001", "success", "Add error handling")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_fix_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step starting with 'Fix' bumps phase to implementing."""
+        manager.approach_add(title="Bug")
+
+        manager.approach_add_tried("A001", "success", "Fix the null pointer issue")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_many_success_steps_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """10+ successful tried steps bumps phase to implementing."""
+        manager.approach_add(title="Big task")
+
+        # Add 10 generic success steps
+        for i in range(10):
+            manager.approach_add_tried("A001", "success", f"Step {i + 1}")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_nine_steps_stays_in_research(self, manager: LessonsManager) -> None:
+        """9 successful steps without implementing keywords stays in research."""
+        manager.approach_add(title="Research task")
+
+        for i in range(9):
+            manager.approach_add_tried("A001", "success", f"Research step {i + 1}")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "research"
+
+    def test_phase_not_downgraded(self, manager: LessonsManager) -> None:
+        """If already in implementing, phase is not changed."""
+        manager.approach_add(title="Feature")
+        manager.approach_update_phase("A001", "implementing")
+
+        manager.approach_add_tried("A001", "success", "Research more options")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_review_phase_not_changed(self, manager: LessonsManager) -> None:
+        """If in review phase, auto-update doesn't change it."""
+        manager.approach_add(title="Feature")
+        manager.approach_update_phase("A001", "review")
+
+        manager.approach_add_tried("A001", "success", "Implement one more thing")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "review"
+
+    def test_planning_phase_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Planning phase can be bumped to implementing."""
+        manager.approach_add(title="Feature")
+        manager.approach_update_phase("A001", "planning")
+
+        manager.approach_add_tried("A001", "success", "Implement the API")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_write_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step starting with 'Write' bumps phase to implementing."""
+        manager.approach_add(title="Docs")
+
+        manager.approach_add_tried("A001", "success", "Write the documentation")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_update_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
+        """Tried step starting with 'Update' bumps phase to implementing."""
+        manager.approach_add(title="Refactor")
+
+        manager.approach_add_tried("A001", "success", "Update the interface")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_failed_implement_step_still_bumps(self, manager: LessonsManager) -> None:
+        """Failed implementing step still bumps phase (attempted impl)."""
+        manager.approach_add(title="Feature")
+
+        manager.approach_add_tried("A001", "fail", "Implement the feature - build errors")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
 
 
 if __name__ == "__main__":
