@@ -28,6 +28,8 @@ try:
         Handoff,
         HandoffContext,
         HandoffCompleteResult,
+        ValidationResult,
+        HandoffResumeResult,
         # Backward compatibility aliases
         TriedApproach,
         Approach,
@@ -51,6 +53,8 @@ except ImportError:
         Handoff,
         HandoffContext,
         HandoffCompleteResult,
+        ValidationResult,
+        HandoffResumeResult,
         # Backward compatibility aliases
         TriedApproach,
         Approach,
@@ -1594,9 +1598,20 @@ Consider extracting lessons about:
 
         lines = []
 
+        # Calculate ready count for header
+        all_handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        ready_count = sum(
+            1 for h in active_handoffs
+            if self._is_handoff_ready(h, all_handoffs)
+        )
+
         # Active handoffs section
         if active_handoffs:
-            lines.append("## Active Handoffs")
+            # Show ready status in header
+            if ready_count > 0:
+                lines.append(f"## Active Handoffs (Ready: {ready_count})")
+            else:
+                lines.append("## Active Handoffs (All blocked)")
             lines.append("")
 
             for handoff in active_handoffs:
@@ -1870,6 +1885,169 @@ Consider extracting lessons about:
     def approach_inject_todos(self) -> str:
         """Backward compatibility alias for handoff_inject_todos."""
         return self.handoff_inject_todos()
+
+    def _is_handoff_ready(self, handoff: Handoff, all_handoffs: List[Handoff]) -> bool:
+        """
+        Check if a handoff is ready to work on.
+
+        A handoff is ready if:
+        - It has no blocked_by dependencies, OR
+        - All of its blocked_by dependencies are completed
+
+        Args:
+            handoff: The handoff to check
+            all_handoffs: List of all handoffs (to look up blocker statuses)
+
+        Returns:
+            True if the handoff is ready, False if blocked
+        """
+        # No blockers = ready
+        if not handoff.blocked_by:
+            return True
+
+        # Build a lookup dict for all handoffs by ID
+        handoff_by_id = {h.id: h for h in all_handoffs}
+
+        # Check if all blockers are completed
+        for blocker_id in handoff.blocked_by:
+            blocker = handoff_by_id.get(blocker_id)
+            if blocker is None:
+                # Blocker doesn't exist (maybe deleted/archived) - treat as completed
+                continue
+            if blocker.status != "completed":
+                # At least one blocker is not completed
+                return False
+
+        # All blockers are completed (or don't exist)
+        return True
+
+    def handoff_ready(self) -> List[Handoff]:
+        """
+        Get list of handoffs that are ready to work on.
+
+        A handoff is ready if:
+        - Its status is not 'completed', AND
+        - Its blocked_by list is empty OR all blockers are completed
+
+        Returns:
+            List of ready handoffs, sorted by:
+            1. in_progress first (active work takes priority)
+            2. Then by updated date (most recent first)
+        """
+        if not self.project_handoffs_file.exists():
+            return []
+
+        all_handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+        ready = []
+        for handoff in all_handoffs:
+            # Exclude completed handoffs
+            if handoff.status == "completed":
+                continue
+
+            # Check if ready (no blockers or all blockers completed)
+            if self._is_handoff_ready(handoff, all_handoffs):
+                ready.append(handoff)
+
+        # Sort: in_progress first, then by updated date (newest first)
+        def sort_key(h: Handoff) -> tuple:
+            # in_progress gets priority (0), others get 1
+            status_priority = 0 if h.status == "in_progress" else 1
+            # Negate updated for descending order (most recent first)
+            # Using ordinal for date comparison
+            updated_ordinal = -h.updated.toordinal() if h.updated else 0
+            return (status_priority, updated_ordinal)
+
+        ready.sort(key=sort_key)
+        return ready
+
+    # Backward compatibility alias
+    def approach_ready(self) -> List[Handoff]:
+        """Backward compatibility alias for handoff_ready."""
+        return self.handoff_ready()
+
+    def handoff_resume(self, handoff_id: str) -> HandoffResumeResult:
+        """
+        Resume a handoff with validation of codebase state.
+
+        Validates that:
+        - If context has git_ref: current HEAD matches (warns if diverged)
+        - If context has critical_files: files still exist (errors if missing)
+
+        Args:
+            handoff_id: The handoff ID to resume
+
+        Returns:
+            HandoffResumeResult with handoff, validation result, and context
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        import subprocess
+
+        handoff = self.handoff_get(handoff_id)
+        if handoff is None:
+            raise ValueError(f"Handoff {handoff_id} not found")
+
+        warnings = []
+        errors = []
+
+        context = handoff.handoff
+
+        # If no context, return with valid status (legacy mode)
+        if context is None:
+            validation = ValidationResult(valid=True, warnings=[], errors=[])
+            return HandoffResumeResult(
+                handoff=handoff,
+                validation=validation,
+                context=None,
+            )
+
+        # Validate git ref if present
+        if context.git_ref:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    current_head = result.stdout.strip()
+                    if current_head != context.git_ref:
+                        warnings.append(
+                            f"Codebase has changed since handoff "
+                            f"(was {context.git_ref[:7]}, now {current_head[:7]})"
+                        )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                # Git not available or timeout - skip git validation
+                pass
+
+        # Validate critical files if present
+        if context.critical_files:
+            for file_ref in context.critical_files:
+                # Extract file path from file:line format
+                file_path = file_ref.split(":")[0] if ":" in file_ref else file_ref
+                full_path = self.project_root / file_path
+                if not full_path.exists():
+                    errors.append(f"File no longer exists: {file_path}")
+
+        # Determine validity: valid if no errors (warnings are OK)
+        valid = len(errors) == 0
+
+        validation = ValidationResult(valid=valid, warnings=warnings, errors=errors)
+
+        return HandoffResumeResult(
+            handoff=handoff,
+            validation=validation,
+            context=context,
+        )
+
+    # Backward compatibility alias
+    def approach_resume(self, approach_id: str) -> HandoffResumeResult:
+        """Backward compatibility alias for handoff_resume."""
+        return self.handoff_resume(approach_id)
 
 
 # Backward compatibility alias for the mixin class

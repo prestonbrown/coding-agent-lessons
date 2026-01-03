@@ -365,3 +365,62 @@ class RelevanceResult:
             lines.append(f"[{sl.lesson.id}] {rating} (relevance: {sl.score}/10) {prefix}{sl.lesson.title}")
             lines.append(f"    -> {sl.lesson.content}")
         return "\n".join(lines)
+
+
+@dataclass
+class ValidationResult:
+    """Result of handoff resume validation."""
+    valid: bool
+    warnings: List[str] = field(default_factory=list)  # e.g., "Codebase changed since handoff"
+    errors: List[str] = field(default_factory=list)    # e.g., "File no longer exists: foo.py"
+
+    def format(self) -> str:
+        """Format validation result for display."""
+        if self.valid and not self.warnings:
+            return "Validation passed"
+
+        lines = []
+        if self.errors:
+            lines.append("Errors:")
+            for error in self.errors:
+                lines.append(f"  - {error}")
+        if self.warnings:
+            lines.append("Warnings:")
+            for warning in self.warnings:
+                lines.append(f"  - {warning}")
+
+        status = "INVALID" if not self.valid else "VALID (with warnings)"
+        lines.insert(0, f"Validation: {status}")
+        return "\n".join(lines)
+
+
+@dataclass
+class HandoffResumeResult:
+    """Result of resuming a handoff."""
+    handoff: Handoff
+    validation: ValidationResult
+    context: Optional[HandoffContext] = None
+
+    def format(self) -> str:
+        """Format resume result for display."""
+        lines = [
+            f"### [{self.handoff.id}] {self.handoff.title}",
+            f"- **Status**: {self.handoff.status} | **Phase**: {self.handoff.phase}",
+            "",
+            self.validation.format(),
+        ]
+
+        if self.context:
+            lines.append("")
+            lines.append("**Context**:")
+            lines.append(f"  - Summary: {self.context.summary}")
+            if self.context.critical_files:
+                lines.append(f"  - Critical files: {', '.join(self.context.critical_files)}")
+            if self.context.blockers:
+                lines.append(f"  - Blockers: {', '.join(self.context.blockers)}")
+
+        if self.handoff.next_steps:
+            lines.append("")
+            lines.append(f"**Next**: {self.handoff.next_steps}")
+
+        return "\n".join(lines)

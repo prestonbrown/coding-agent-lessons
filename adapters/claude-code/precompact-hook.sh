@@ -4,10 +4,10 @@
 #
 # When auto-compaction or /compact is triggered, this hook:
 # 1. Reads recent conversation from transcript
-# 2. Uses Haiku to extract a progress summary
-# 3. Updates the most recent active approach's checkpoint
+# 2. Uses Haiku to extract structured HandoffContext as JSON
+# 3. Updates the most recent active handoff's context via set-context CLI
 #
-# This enables session handoff across compactions.
+# This enables rich session handoff across compactions.
 
 set -uo pipefail
 
@@ -44,6 +44,12 @@ find_project_root() {
     echo "$1"
 }
 
+# Get current git commit hash (short form)
+get_git_ref() {
+    local project_root="$1"
+    git -C "$project_root" rev-parse --short HEAD 2>/dev/null || echo ""
+}
+
 # Extract recent messages from transcript for summarization
 extract_recent_messages() {
     local transcript_path="$1"
@@ -66,7 +72,51 @@ extract_recent_messages() {
     ' "$transcript_path" 2>/dev/null | tail -n "$max_messages"
 }
 
-# Call Haiku to extract progress summary
+# Call Haiku to extract structured handoff context as JSON
+extract_handoff_context() {
+    local messages="$1"
+    local git_ref="$2"
+
+    # Skip if messages are empty or too short
+    [[ ${#messages} -lt 50 ]] && return 1
+
+    local prompt='Analyze this conversation and extract a structured handoff context for session continuity.
+
+Return ONLY valid JSON with these fields:
+{
+  "summary": "1-2 sentence progress summary - what was accomplished and current state",
+  "critical_files": ["file.py:42", "other.py:100"],  // 2-3 most important file:line refs mentioned
+  "recent_changes": ["Added X", "Fixed Y"],          // list of changes made this session
+  "learnings": ["Pattern found", "Gotcha discovered"], // discoveries/patterns found
+  "blockers": ["Waiting for Z"]                       // issues blocking progress (empty if none)
+}
+
+Important:
+- Return ONLY the JSON object, no markdown code blocks, no explanation
+- Keep arrays short (2-5 items max)
+- Use file:line format for critical_files when line numbers are mentioned
+- Leave arrays empty [] if nothing applies
+
+Conversation:
+'"$messages"
+
+    # Call claude in programmatic mode with haiku
+    local result
+    result=$(echo "$prompt" | timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
+
+    # Validate we got something useful
+    [[ -z "$result" ]] && return 1
+
+    # Strip any markdown code block markers if present
+    result=$(echo "$result" | sed 's/^```json//g' | sed 's/^```//g' | sed 's/```$//g')
+
+    # Inject git_ref into the JSON
+    result=$(echo "$result" | jq --arg ref "$git_ref" '. + {git_ref: $ref}' 2>/dev/null) || return 1
+
+    echo "$result"
+}
+
+# Legacy: Call Haiku to extract simple progress summary (fallback)
 extract_progress_summary() {
     local messages="$1"
 
@@ -91,15 +141,16 @@ $messages"
     echo "$result"
 }
 
-# Get the most recent active approach
+# Get the most recent active approach/handoff
 get_most_recent_approach() {
     local project_root="$1"
 
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        # Get first non-completed approach (most recent by file order)
+        # Get first non-completed handoff (most recent by file order)
+        # Matches both legacy A### format and new hf-XXXXXXX format
         PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            python3 "$PYTHON_MANAGER" approach list 2>/dev/null | \
-            head -1 | grep -oE '\[A[0-9]{3}\]' | tr -d '[]' || true
+            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | \
+            head -1 | grep -oE '\[(A[0-9]{3}|hf-[0-9a-f]+)\]' | tr -d '[]' || true
     fi
 }
 
@@ -119,13 +170,13 @@ main() {
 
     [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && exit 0
 
-    # Find most recent active approach
-    local approach_id
-    approach_id=$(get_most_recent_approach "$project_root")
+    # Find most recent active handoff
+    local handoff_id
+    handoff_id=$(get_most_recent_approach "$project_root")
 
-    # No active approach - nothing to checkpoint
-    [[ -z "$approach_id" ]] && {
-        echo "[precompact] No active approach to checkpoint" >&2
+    # No active handoff - nothing to checkpoint
+    [[ -z "$handoff_id" ]] && {
+        echo "[precompact] No active handoff to checkpoint" >&2
         exit 0
     }
 
@@ -138,23 +189,49 @@ main() {
         exit 0
     }
 
-    # Call Haiku to extract progress summary
-    local summary
-    summary=$(extract_progress_summary "$messages") || {
-        echo "[precompact] Failed to extract progress summary" >&2
-        exit 0
-    }
+    # Get current git ref
+    local git_ref
+    git_ref=$(get_git_ref "$project_root")
 
-    # Update the approach checkpoint
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        local result
-        result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" approach update "$approach_id" --checkpoint "$summary" 2>&1)
+    # Try to extract structured handoff context first
+    local context_json
+    context_json=$(extract_handoff_context "$messages" "$git_ref")
 
-        if [[ $? -eq 0 ]]; then
-            echo "[precompact] Checkpointed $approach_id: ${summary:0:50}..." >&2
-        else
-            echo "[precompact] Failed to update checkpoint: $result" >&2
+    if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
+        # Use new structured set-context command
+        if [[ -f "$PYTHON_MANAGER" ]]; then
+            local result
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                python3 "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
+
+            if [[ $? -eq 0 ]]; then
+                local summary_preview
+                summary_preview=$(echo "$context_json" | jq -r '.summary // ""' | head -c 50)
+                echo "[precompact] Set context for $handoff_id (git: ${git_ref:-none}): ${summary_preview}..." >&2
+            else
+                echo "[precompact] Failed to set context: $result" >&2
+                # Fall through to legacy checkpoint
+            fi
+        fi
+    else
+        # Fallback to legacy checkpoint if structured extraction fails
+        echo "[precompact] Falling back to legacy checkpoint" >&2
+        local summary
+        summary=$(extract_progress_summary "$messages") || {
+            echo "[precompact] Failed to extract progress summary" >&2
+            exit 0
+        }
+
+        if [[ -f "$PYTHON_MANAGER" ]]; then
+            local result
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                python3 "$PYTHON_MANAGER" handoff update "$handoff_id" --checkpoint "$summary" 2>&1)
+
+            if [[ $? -eq 0 ]]; then
+                echo "[precompact] Checkpointed $handoff_id: ${summary:0:50}..." >&2
+            else
+                echo "[precompact] Failed to update checkpoint: $result" >&2
+            fi
         fi
     fi
 

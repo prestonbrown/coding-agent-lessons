@@ -3891,5 +3891,642 @@ class TestFileReferences:
         assert handoff.files == ["src/main.py", "src/utils.py"]
 
 
+# =============================================================================
+# Ready Queue (Phase 5)
+# =============================================================================
+
+
+class TestHandoffReady:
+    """Tests for ready queue feature - surfacing unblocked work."""
+
+    def test_ready_no_blockers(self, manager: "LessonsManager"):
+        """Handoff without blockers is ready."""
+        handoff_id = manager.handoff_add(title="Independent work")
+
+        ready_list = manager.handoff_ready()
+
+        assert len(ready_list) == 1
+        assert ready_list[0].id == handoff_id
+
+    def test_ready_blockers_completed(self, manager: "LessonsManager"):
+        """Handoff with completed blockers is ready."""
+        # Create blocker and complete it
+        blocker_id = manager.handoff_add(title="Blocker task")
+        manager.handoff_complete(blocker_id)
+
+        # Create dependent handoff blocked by the (now completed) blocker
+        dependent_id = manager.handoff_add(title="Dependent task")
+        manager.handoff_update_blocked_by(dependent_id, [blocker_id])
+
+        ready_list = manager.handoff_ready()
+
+        # Should include the dependent since blocker is completed
+        ready_ids = [h.id for h in ready_list]
+        assert dependent_id in ready_ids
+
+    def test_not_ready_blockers_pending(self, manager: "LessonsManager"):
+        """Handoff with pending blockers is not ready."""
+        # Create blocker that's still in progress
+        blocker_id = manager.handoff_add(title="Blocker task")
+        manager.handoff_update_status(blocker_id, "in_progress")
+
+        # Create dependent handoff blocked by the pending blocker
+        dependent_id = manager.handoff_add(title="Dependent task")
+        manager.handoff_update_blocked_by(dependent_id, [blocker_id])
+
+        ready_list = manager.handoff_ready()
+
+        # Should NOT include the dependent since blocker is not completed
+        ready_ids = [h.id for h in ready_list]
+        assert dependent_id not in ready_ids
+        # But blocker should be ready (it has no blockers itself)
+        assert blocker_id in ready_ids
+
+    def test_ready_excludes_completed(self, manager: "LessonsManager"):
+        """Completed handoffs should not appear in ready list."""
+        handoff_id = manager.handoff_add(title="Will complete")
+        manager.handoff_complete(handoff_id)
+
+        ready_list = manager.handoff_ready()
+
+        ready_ids = [h.id for h in ready_list]
+        assert handoff_id not in ready_ids
+
+    def test_ready_sorted_in_progress_first(self, manager: "LessonsManager"):
+        """in_progress handoffs should be sorted before not_started."""
+        # Create a not_started handoff first
+        not_started_id = manager.handoff_add(title="Not started yet")
+
+        # Create an in_progress handoff second
+        in_progress_id = manager.handoff_add(title="Already working")
+        manager.handoff_update_status(in_progress_id, "in_progress")
+
+        ready_list = manager.handoff_ready()
+
+        # in_progress should come first
+        assert len(ready_list) >= 2
+        in_progress_idx = next(i for i, h in enumerate(ready_list) if h.id == in_progress_id)
+        not_started_idx = next(i for i, h in enumerate(ready_list) if h.id == not_started_id)
+        assert in_progress_idx < not_started_idx
+
+    def test_ready_multiple_blockers_all_completed(self, manager: "LessonsManager"):
+        """Handoff is ready only when ALL blockers are completed."""
+        blocker1_id = manager.handoff_add(title="Blocker 1")
+        blocker2_id = manager.handoff_add(title="Blocker 2")
+
+        dependent_id = manager.handoff_add(title="Needs both")
+        manager.handoff_update_blocked_by(dependent_id, [blocker1_id, blocker2_id])
+
+        # Complete only one blocker
+        manager.handoff_complete(blocker1_id)
+
+        ready_list = manager.handoff_ready()
+        ready_ids = [h.id for h in ready_list]
+
+        # Dependent is NOT ready - still blocked by blocker2
+        assert dependent_id not in ready_ids
+        # blocker2 is ready (no blockers)
+        assert blocker2_id in ready_ids
+
+        # Now complete the second blocker
+        manager.handoff_complete(blocker2_id)
+
+        ready_list = manager.handoff_ready()
+        ready_ids = [h.id for h in ready_list]
+
+        # Now dependent is ready
+        assert dependent_id in ready_ids
+
+    def test_ready_cli_command(self, temp_lessons_base, temp_project_root):
+        """CLI lists ready handoffs."""
+        import subprocess
+
+        env = {
+            **os.environ,
+            "LESSONS_BASE": str(temp_lessons_base),
+            "PROJECT_DIR": str(temp_project_root),
+        }
+
+        # Add a handoff
+        subprocess.run(
+            [sys.executable, "-m", "core.cli", "handoff", "add", "Ready task"],
+            env=env,
+            cwd=Path(__file__).parent.parent,
+            check=True,
+        )
+
+        # Run ready command
+        result = subprocess.run(
+            [sys.executable, "-m", "core.cli", "handoff", "ready"],
+            env=env,
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        assert "Ready task" in result.stdout
+
+    def test_inject_shows_ready_count(self, manager: "LessonsManager"):
+        """Injection should show ready count at top."""
+        # Create some handoffs
+        manager.handoff_add(title="Ready work 1")
+        manager.handoff_add(title="Ready work 2")
+
+        # Create one that's blocked
+        blocker_id = manager.handoff_add(title="Blocker")
+        blocked_id = manager.handoff_add(title="Blocked work")
+        manager.handoff_update_blocked_by(blocked_id, [blocker_id])
+
+        output = manager.handoff_inject()
+
+        # Should show ready count - 3 are ready (blocker has no deps, ready 1 & 2)
+        assert "Ready: 3" in output or "3 ready" in output.lower()
+
+
+# =============================================================================
+# Handoff Resume with Validation (Phase 4)
+# =============================================================================
+
+
+class TestHandoffResume:
+    """Tests for handoff_resume with validation."""
+
+    def test_resume_handoff_without_context(self, manager: "LessonsManager"):
+        """Resuming a handoff without context should work (legacy mode)."""
+        # Create a basic handoff without context
+        handoff_id = manager.handoff_add(
+            title="Test handoff",
+            desc="A basic handoff without context",
+        )
+
+        result = manager.handoff_resume(handoff_id)
+
+        assert result is not None
+        assert result.handoff.id == handoff_id
+        assert result.handoff.title == "Test handoff"
+        assert result.validation.valid is True
+        assert result.validation.warnings == []
+        assert result.validation.errors == []
+        assert result.context is None
+
+    def test_resume_handoff_with_valid_context(self, manager: "LessonsManager", temp_project_root: Path):
+        """Resuming a handoff with valid context should show no warnings."""
+        # Create a test file
+        test_file = temp_project_root / "src" / "main.py"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("def main():\n    pass\n")
+
+        # Initialize git repo and make commit
+        subprocess.run(["git", "init"], cwd=temp_project_root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=temp_project_root, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=temp_project_root,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@test.com",
+                 "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@test.com"},
+        )
+
+        # Get the current commit hash
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=temp_project_root,
+            capture_output=True,
+            text=True,
+        )
+        current_commit = result.stdout.strip()
+
+        # Create handoff with context using current commit
+        from core.models import HandoffContext
+        handoff_id = manager.handoff_add(title="Test with context")
+        context = HandoffContext(
+            summary="Working on main function",
+            critical_files=["src/main.py:1"],
+            recent_changes=["Added main.py"],
+            learnings=["Python project setup"],
+            blockers=[],
+            git_ref=current_commit,
+        )
+        manager.handoff_update_context(handoff_id, context)
+
+        resume_result = manager.handoff_resume(handoff_id)
+
+        assert resume_result is not None
+        assert resume_result.validation.valid is True
+        assert resume_result.validation.warnings == []
+        assert resume_result.validation.errors == []
+        assert resume_result.context is not None
+        assert resume_result.context.summary == "Working on main function"
+
+    def test_resume_handoff_git_diverged(self, manager: "LessonsManager", temp_project_root: Path):
+        """Resuming a handoff after git commit should warn about divergence."""
+        # Initialize git and make first commit
+        subprocess.run(["git", "init"], cwd=temp_project_root, capture_output=True)
+        test_file = temp_project_root / "src" / "main.py"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("def main():\n    pass\n")
+        subprocess.run(["git", "add", "."], cwd=temp_project_root, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=temp_project_root,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@test.com",
+                 "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@test.com"},
+        )
+
+        # Get the first commit hash
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=temp_project_root,
+            capture_output=True,
+            text=True,
+        )
+        first_commit = result.stdout.strip()
+
+        # Create handoff with context using first commit
+        from core.models import HandoffContext
+        handoff_id = manager.handoff_add(title="Test git divergence")
+        context = HandoffContext(
+            summary="Working on main function",
+            critical_files=["src/main.py:1"],
+            recent_changes=[],
+            learnings=[],
+            blockers=[],
+            git_ref=first_commit,
+        )
+        manager.handoff_update_context(handoff_id, context)
+
+        # Make another commit to cause divergence
+        test_file.write_text("def main():\n    print('hello')\n")
+        subprocess.run(["git", "add", "."], cwd=temp_project_root, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "second"],
+            cwd=temp_project_root,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@test.com",
+                 "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@test.com"},
+        )
+
+        resume_result = manager.handoff_resume(handoff_id)
+
+        assert resume_result is not None
+        assert resume_result.validation.valid is True  # Still valid, just has warnings
+        assert len(resume_result.validation.warnings) == 1
+        assert "diverged" in resume_result.validation.warnings[0].lower() or \
+               "changed" in resume_result.validation.warnings[0].lower()
+        assert resume_result.validation.errors == []
+
+    def test_resume_handoff_missing_file(self, manager: "LessonsManager", temp_project_root: Path):
+        """Resuming a handoff with missing critical file should report error."""
+        # Initialize git
+        subprocess.run(["git", "init"], cwd=temp_project_root, capture_output=True)
+
+        # Create and commit a file
+        test_file = temp_project_root / "src" / "main.py"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("def main(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=temp_project_root, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=temp_project_root,
+            capture_output=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@test.com",
+                 "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@test.com"},
+        )
+
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=temp_project_root,
+            capture_output=True,
+            text=True,
+        )
+        current_commit = result.stdout.strip()
+
+        # Create handoff with context referencing existing file
+        from core.models import HandoffContext
+        handoff_id = manager.handoff_add(title="Test missing file")
+        context = HandoffContext(
+            summary="Working on files",
+            critical_files=["src/main.py:1", "src/missing.py:10"],  # One exists, one doesn't
+            recent_changes=[],
+            learnings=[],
+            blockers=[],
+            git_ref=current_commit,
+        )
+        manager.handoff_update_context(handoff_id, context)
+
+        resume_result = manager.handoff_resume(handoff_id)
+
+        assert resume_result is not None
+        assert resume_result.validation.valid is False  # Invalid due to missing file
+        assert len(resume_result.validation.errors) == 1
+        assert "src/missing.py" in resume_result.validation.errors[0]
+
+    def test_resume_handoff_not_found(self, manager: "LessonsManager"):
+        """Resuming a non-existent handoff should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            manager.handoff_resume("hf-nonexistent")
+        assert "not found" in str(exc_info.value).lower()
+
+    def test_resume_cli_command(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI handoff resume command should output context."""
+        # Create a handoff first
+        env = {
+            **os.environ,
+            "LESSONS_BASE": str(temp_lessons_base),
+            "PROJECT_DIR": str(temp_project_root),
+        }
+
+        # Add a handoff
+        result = subprocess.run(
+            [sys.executable, "-m", "core.cli", "handoff", "add", "Test CLI resume"],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, f"Failed to add handoff: {result.stderr}"
+
+        # Extract the handoff ID from output (e.g., "Added approach hf-abc1234: Test CLI resume")
+        import re
+        match = re.search(r"(hf-[0-9a-f]+)", result.stdout)
+        assert match, f"Could not find handoff ID in output: {result.stdout}"
+        handoff_id = match.group(1)
+
+        # Resume the handoff
+        result = subprocess.run(
+            [sys.executable, "-m", "core.cli", "handoff", "resume", handoff_id],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, f"Resume failed: {result.stderr}"
+        assert handoff_id in result.stdout
+        assert "Test CLI resume" in result.stdout
+
+
+# =============================================================================
+# Phase 6: CLI set-context Command
+# =============================================================================
+
+
+class TestSetContextCLI:
+    """Tests for the CLI set-context command used by precompact-hook."""
+
+    def test_set_context_from_json(self, tmp_path):
+        """CLI should parse JSON and set context on handoff."""
+        import json
+
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # First create a handoff
+        result = subprocess.run(
+            [sys.executable, "core/cli.py", "handoff", "add", "Test context work"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0
+        # Extract handoff ID from output (e.g., "Added approach hf-abc1234: Test context work")
+        handoff_id = result.stdout.split()[2].rstrip(":")
+
+        # Now set context
+        context_json = json.dumps({
+            "summary": "Implemented feature X",
+            "critical_files": ["core/cli.py:42", "core/models.py:100"],
+            "recent_changes": ["Added CLI command", "Fixed parsing"],
+            "learnings": ["JSON parsing is tricky"],
+            "blockers": [],
+            "git_ref": "abc1234",
+        })
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/cli.py",
+                "handoff",
+                "set-context",
+                handoff_id,
+                "--json",
+                context_json,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "abc1234" in result.stdout
+
+    def test_set_context_updates_handoff(self, manager: "LessonsManager"):
+        """set-context should properly store context in handoff."""
+        try:
+            from core.models import HandoffContext
+        except ImportError:
+            pytest.skip("HandoffContext not yet implemented")
+
+        handoff_id = manager.handoff_add(title="Context test")
+
+        context = HandoffContext(
+            summary="Made good progress on feature",
+            critical_files=["core/main.py:50", "tests/test_main.py:100"],
+            recent_changes=["Added tests", "Fixed bug"],
+            learnings=["Need to mock external calls"],
+            blockers=["Waiting for API response"],
+            git_ref="def5678",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.handoff is not None
+        assert handoff.handoff.summary == "Made good progress on feature"
+        assert handoff.handoff.git_ref == "def5678"
+        assert "core/main.py:50" in handoff.handoff.critical_files
+        assert "Added tests" in handoff.handoff.recent_changes
+        assert "Need to mock external calls" in handoff.handoff.learnings
+        assert "Waiting for API response" in handoff.handoff.blockers
+
+    def test_set_context_preserves_other_fields(self, manager: "LessonsManager"):
+        """set-context should not alter other handoff fields."""
+        try:
+            from core.models import HandoffContext
+        except ImportError:
+            pytest.skip("HandoffContext not yet implemented")
+
+        handoff_id = manager.handoff_add(
+            title="Preserve fields test",
+            desc="Original description",
+            files=["original.py"],
+            phase="implementing",
+            agent="general-purpose",
+        )
+        manager.handoff_update_status(handoff_id, "in_progress")
+        manager.handoff_add_tried(handoff_id, "success", "First step done")
+        manager.handoff_update_next(handoff_id, "Next step here")
+
+        context = HandoffContext(
+            summary="New context",
+            critical_files=["new.py:10"],
+            recent_changes=["Update"],
+            learnings=[],
+            blockers=[],
+            git_ref="ghi9012",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+
+        handoff = manager.handoff_get(handoff_id)
+        # Original fields should be preserved
+        assert handoff.title == "Preserve fields test"
+        assert handoff.description == "Original description"
+        assert handoff.status == "in_progress"
+        assert handoff.phase == "implementing"
+        assert handoff.agent == "general-purpose"
+        assert len(handoff.tried) == 1
+        assert handoff.next_steps == "Next step here"
+        # Context should be set
+        assert handoff.handoff is not None
+        assert handoff.handoff.git_ref == "ghi9012"
+
+    def test_set_context_invalid_json(self, tmp_path):
+        """CLI should reject invalid JSON with helpful error."""
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # First create a handoff
+        result = subprocess.run(
+            [sys.executable, "core/cli.py", "handoff", "add", "Invalid JSON test"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0
+        handoff_id = result.stdout.split()[2].rstrip(":")
+
+        # Try to set invalid JSON
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/cli.py",
+                "handoff",
+                "set-context",
+                handoff_id,
+                "--json",
+                "not valid json",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert "Invalid JSON" in result.stderr
+
+    def test_set_context_not_object(self, tmp_path):
+        """CLI should reject non-object JSON."""
+        import json
+
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # First create a handoff
+        result = subprocess.run(
+            [sys.executable, "core/cli.py", "handoff", "add", "Array JSON test"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0
+        handoff_id = result.stdout.split()[2].rstrip(":")
+
+        # Try to set array instead of object
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/cli.py",
+                "handoff",
+                "set-context",
+                handoff_id,
+                "--json",
+                json.dumps(["item1", "item2"]),
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert "JSON object" in result.stderr
+
+    def test_set_context_nonexistent_handoff(self, tmp_path):
+        """CLI should error on nonexistent handoff."""
+        import json
+
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        context_json = json.dumps({
+            "summary": "Test",
+            "critical_files": [],
+            "recent_changes": [],
+            "learnings": [],
+            "blockers": [],
+            "git_ref": "abc123",
+        })
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/cli.py",
+                "handoff",
+                "set-context",
+                "hf-nonexist",
+                "--json",
+                context_json,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert "not found" in result.stderr.lower()
+
+    def test_set_context_empty_fields(self, manager: "LessonsManager"):
+        """set-context should handle empty/missing fields gracefully."""
+        try:
+            from core.models import HandoffContext
+        except ImportError:
+            pytest.skip("HandoffContext not yet implemented")
+
+        handoff_id = manager.handoff_add(title="Empty fields test")
+
+        # Context with only summary (other fields empty)
+        context = HandoffContext(
+            summary="Just a summary",
+            critical_files=[],
+            recent_changes=[],
+            learnings=[],
+            blockers=[],
+            git_ref="abc123",  # git_ref is extracted from Haiku
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.handoff is not None
+        assert handoff.handoff.summary == "Just a summary"
+        assert handoff.handoff.critical_files == []
+        assert handoff.handoff.git_ref == "abc123"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

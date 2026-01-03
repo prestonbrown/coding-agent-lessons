@@ -181,6 +181,32 @@ def main():
         help="Format active approach as TodoWrite continuation prompt"
     )
 
+    # approach ready (list ready handoffs)
+    approach_subparsers.add_parser(
+        "ready",
+        help="List handoffs that are ready to work on (not blocked)"
+    )
+
+    # approach set-context (set structured handoff context from precompact hook)
+    set_context_parser = approach_subparsers.add_parser(
+        "set-context",
+        help="Set structured handoff context (called by precompact-hook)"
+    )
+    set_context_parser.add_argument("id", help="Handoff ID (e.g., A001 or hf-abc1234)")
+    set_context_parser.add_argument(
+        "--json",
+        required=True,
+        dest="context_json",
+        help="JSON object with summary, critical_files, recent_changes, learnings, blockers, git_ref"
+    )
+
+    # approach resume (resume handoff with validation)
+    resume_parser = approach_subparsers.add_parser(
+        "resume",
+        help="Resume a handoff with validation of codebase state"
+    )
+    resume_parser.add_argument("id", help="Handoff ID (e.g., A001 or hf-abc1234)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -436,6 +462,49 @@ def main():
                 output = manager.approach_inject_todos()
                 if output:
                     print(output)
+
+            elif args.approach_command == "ready":
+                ready_handoffs = manager.handoff_ready()
+                if not ready_handoffs:
+                    print("(no ready handoffs)")
+                else:
+                    for handoff in ready_handoffs:
+                        status_indicator = "[*]" if handoff.status == "in_progress" else "[ ]"
+                        print(f"{status_indicator} [{handoff.id}] {handoff.title}")
+                        print(f"    Status: {handoff.status} | Phase: {handoff.phase} | Updated: {handoff.updated}")
+                        if handoff.blocked_by:
+                            print(f"    Blocked by: {', '.join(handoff.blocked_by)} (all completed)")
+                    print(f"\nReady: {len(ready_handoffs)} handoff(s)")
+
+            elif args.approach_command == "set-context":
+                import json as json_module
+                try:
+                    from core.models import HandoffContext
+                except ImportError:
+                    from models import HandoffContext
+                try:
+                    context_data = json_module.loads(args.context_json)
+                    if not isinstance(context_data, dict):
+                        print("Error: context_json must be a JSON object", file=sys.stderr)
+                        sys.exit(1)
+                    # Build HandoffContext from JSON data
+                    context = HandoffContext(
+                        summary=context_data.get("summary", ""),
+                        critical_files=context_data.get("critical_files", []),
+                        recent_changes=context_data.get("recent_changes", []),
+                        learnings=context_data.get("learnings", []),
+                        blockers=context_data.get("blockers", []),
+                        git_ref=context_data.get("git_ref", ""),
+                    )
+                    manager.approach_update_context(args.id, context)
+                    print(f"Set context for {args.id} (git ref: {context.git_ref})")
+                except json_module.JSONDecodeError as e:
+                    print(f"Error: Invalid JSON: {e}", file=sys.stderr)
+                    sys.exit(1)
+
+            elif args.approach_command == "resume":
+                result = manager.handoff_resume(args.id)
+                print(result.format())
 
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
