@@ -3,7 +3,7 @@
 """
 Debug logging for Claude Recall.
 
-Outputs JSON lines format to ~/.config/claude-recall/debug.log
+Outputs JSON lines format to ~/.local/state/claude-recall/debug.log
 when CLAUDE_RECALL_DEBUG, RECALL_DEBUG, or LESSONS_DEBUG is set.
 
 Levels:
@@ -66,16 +66,18 @@ def _get_debug_level() -> int:
 def _get_log_path() -> Path:
     """Get the log file path.
 
-    Checks environment variables in order of precedence:
-    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
+    Uses XDG_STATE_HOME (~/.local/state) for logs per XDG spec.
+    CLAUDE_RECALL_STATE overrides with full path to state dir.
     """
-    lessons_base = Path(
-        os.environ.get("CLAUDE_RECALL_BASE")
-        or os.environ.get("RECALL_BASE")
-        or os.environ.get("LESSONS_BASE")
-        or (Path.home() / ".config" / "claude-recall")
-    )
-    return lessons_base / LOG_FILE_NAME
+    explicit_state = os.environ.get("CLAUDE_RECALL_STATE")
+    if explicit_state:
+        # Explicit override: use as-is (already includes claude-recall)
+        state_dir = Path(explicit_state)
+    else:
+        # Default: XDG_STATE_HOME/claude-recall
+        xdg_state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+        state_dir = Path(xdg_state) / "claude-recall"
+    return state_dir / LOG_FILE_NAME
 
 
 def _rotate_if_needed(log_path: Path) -> None:

@@ -53,9 +53,10 @@ python3 core/cli.py handoff list                      # or 'approach list' (alia
 
 | Variable | Purpose |
 |----------|---------|
-| `CLAUDE_RECALL_BASE` | System lessons dir (preferred) |
+| `CLAUDE_RECALL_BASE` | System lessons dir (preferred) - default: `~/.config/claude-recall` |
 | `RECALL_BASE` | System lessons dir (legacy alias) |
-| `LESSONS_BASE` | System lessons dir (legacy alias) - default: `~/.config/claude-recall` |
+| `LESSONS_BASE` | System lessons dir (legacy alias) |
+| `CLAUDE_RECALL_STATE` | State/logs dir - default: `~/.local/state/claude-recall` (XDG) |
 | `PROJECT_DIR` | Project root (default: git root or cwd) |
 | `CLAUDE_RECALL_DEBUG` | Debug level (preferred) |
 | `RECALL_DEBUG` | Debug level (legacy alias) |

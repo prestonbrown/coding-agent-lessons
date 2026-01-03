@@ -13,6 +13,7 @@ set -euo pipefail
 
 # Paths
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-$HOME/.config/claude-recall}"
+CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Old paths for migration
@@ -170,6 +171,7 @@ migrate_config() {
 install_core() {
     log_info "Installing Claude Recall core..."
     mkdir -p "$CLAUDE_RECALL_BASE" "$CLAUDE_RECALL_BASE/plugins"
+    mkdir -p "$CLAUDE_RECALL_STATE"  # XDG state dir for logs
     cp "$SCRIPT_DIR/core/lessons-manager.sh" "$CLAUDE_RECALL_BASE/"
     # Copy all Python modules (new modular structure)
     cp "$SCRIPT_DIR/core/cli.py" "$CLAUDE_RECALL_BASE/"
@@ -473,6 +475,12 @@ uninstall() {
         cleanup_config_dir "$old_path"
     done
 
+    # Clean up state directory (logs)
+    if [[ -d "$CLAUDE_RECALL_STATE" ]]; then
+        rm -rf "$CLAUDE_RECALL_STATE"
+        log_info "Removed state directory: $CLAUDE_RECALL_STATE"
+    fi
+
     log_success "Uninstalled adapters. Lessons preserved."
     log_info "To fully remove lessons: rm -rf $CLAUDE_RECALL_BASE"
 
@@ -567,6 +575,7 @@ main() {
     echo "Claude Recall installed to: $CLAUDE_RECALL_BASE/"
     echo "  - System lessons: $CLAUDE_RECALL_BASE/LESSONS.md"
     echo "  - Project lessons: .claude-recall/LESSONS.md (per-project)"
+    echo "  - Debug logs: $CLAUDE_RECALL_STATE/debug.log (XDG state)"
     echo ""
     echo "Features:"
     echo "  - Lessons shown at session start"
