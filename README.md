@@ -1,4 +1,4 @@
-# Coding Agent Lessons (Recall)
+# Claude Recall
 
 A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with handoffs tracking.
 
@@ -27,14 +27,30 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
 ```bash
 # Clone and install
-git clone https://github.com/prestonbrown/coding-agent-lessons.git
-cd coding-agent-lessons
+git clone https://github.com/prestonbrown/claude-recall.git
+cd claude-recall
 ./install.sh
 
 # Or install for specific tools:
 ./install.sh --claude    # Claude Code only
 ./install.sh --opencode  # OpenCode only
 ```
+
+## Migrating from coding-agent-lessons
+
+Run the installer to automatically migrate:
+```bash
+./install.sh
+```
+
+This migrates:
+- `~/.config/coding-agent-lessons/` → `~/.config/claude-recall/`
+- `.coding-agent-lessons/` → `.claude-recall/`
+
+Environment variables (all work, checked in order):
+- `CLAUDE_RECALL_BASE` (preferred)
+- `RECALL_BASE` (legacy)
+- `LESSONS_BASE` (legacy)
 
 ## Usage
 
@@ -148,13 +164,13 @@ The system can infer phases from tool usage:
 ## File Locations
 
 ```
-~/.config/coding-agent-lessons/
+~/.config/claude-recall/
 ├── LESSONS.md                  # System lessons (apply everywhere)
 ├── lessons-manager.sh          # Bash CLI (legacy)
 ├── .decay-last-run             # Decay timestamp
 └── .citation-state/            # Per-session checkpoints
 
-<project>/.coding-agent-lessons/
+<project>/.claude-recall/
 ├── LESSONS.md                  # Project-specific lessons
 └── APPROACHES.md               # Active work tracking
 ```
@@ -162,7 +178,7 @@ The system can infer phases from tool usage:
 ### Core Implementation
 
 ```
-coding-agent-lessons/
+claude-recall/
 ├── core/
 │   ├── cli.py                  # Python CLI entry point (primary)
 │   ├── debug_logger.py         # JSON debug logging
@@ -189,7 +205,7 @@ coding-agent-lessons/
 ```bash
 # Set environment
 export PROJECT_DIR=/path/to/project
-export LESSONS_BASE=~/.config/coding-agent-lessons
+export CLAUDE_RECALL_BASE=~/.config/claude-recall
 
 # Lessons
 python3 core/lessons_manager.py add pattern "Title" "Content"
@@ -252,9 +268,13 @@ APPROACH COMPLETE A###                         # Mark complete
 ### Environment Variables
 
 ```bash
-LESSONS_BASE=~/.config/coding-agent-lessons  # System lessons location
+CLAUDE_RECALL_BASE=~/.config/claude-recall    # System lessons location (preferred)
+RECALL_BASE=~/.config/claude-recall           # Legacy alias
+LESSONS_BASE=~/.config/claude-recall          # Legacy alias
 PROJECT_DIR=/path/to/project                  # Project root
-LESSONS_DEBUG=0|1|2|3                         # Debug logging level (see below)
+CLAUDE_RECALL_DEBUG=0|1|2|3                   # Debug logging level (preferred)
+RECALL_DEBUG=0|1|2|3                          # Legacy alias
+LESSONS_DEBUG=0|1|2|3                         # Legacy alias
 ```
 
 ### Debug Logging
@@ -263,7 +283,7 @@ Enable structured JSON logging to analyze system behavior:
 
 ```bash
 # Enable info-level logging
-export LESSONS_DEBUG=1
+export CLAUDE_RECALL_DEBUG=1
 
 # Levels:
 #   0 = disabled (default)
@@ -272,11 +292,11 @@ export LESSONS_DEBUG=1
 #   3 = trace: includes file I/O timing, lock waits
 ```
 
-Logs are written to `~/.config/coding-agent-lessons/debug.log` in JSON lines format:
+Logs are written to `~/.config/claude-recall/debug.log` in JSON lines format:
 
 ```bash
 # View in real-time
-tail -f ~/.config/coding-agent-lessons/debug.log | jq .
+tail -f ~/.config/claude-recall/debug.log | jq .
 
 # Filter by event type
 cat debug.log | jq 'select(.event == "citation")'

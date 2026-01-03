@@ -20,21 +20,21 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Override paths for testing
-export LESSONS_BASE="$TEST_DIR/.config/coding-agent-lessons"
+export CLAUDE_RECALL_BASE="$TEST_DIR/.config/claude-recall"
 export PROJECT_DIR="$TEST_DIR/project"
 export HOME="$TEST_DIR"  # Override HOME for .claude paths
 
 setup() {
     rm -rf "$TEST_DIR"
     mkdir -p "$TEST_DIR/project/.git"  # Fake git repo
-    mkdir -p "$LESSONS_BASE"
+    mkdir -p "$CLAUDE_RECALL_BASE"
     mkdir -p "$TEST_DIR/.claude"
 
     # Create settings.json with lessons enabled
     echo '{"lessonsSystem":{"enabled":true}}' > "$TEST_DIR/.claude/settings.json"
 
     # Symlink manager to where hook expects it (HOME is overridden to TEST_DIR)
-    ln -sf "$MANAGER" "$LESSONS_BASE/lessons-manager.sh"
+    ln -sf "$MANAGER" "$CLAUDE_RECALL_BASE/lessons-manager.sh"
 
     # Initialize a test lesson to cite
     "$MANAGER" add pattern "Test lesson" "This is a test lesson" >/dev/null 2>&1
@@ -235,7 +235,7 @@ test_checkpoint_created() {
     run_hook "$transcript"
 
     # Check checkpoint file exists
-    local state_dir="$LESSONS_BASE/.citation-state"
+    local state_dir="$CLAUDE_RECALL_BASE/.citation-state"
     assert_file_exists "$state_dir/test-session" "Checkpoint file should exist"
 }
 
@@ -247,7 +247,7 @@ test_checkpoint_contains_timestamp() {
 
     run_hook "$transcript"
 
-    local state_file="$LESSONS_BASE/.citation-state/test-session"
+    local state_file="$CLAUDE_RECALL_BASE/.citation-state/test-session"
     assert_file_contains "$state_file" "2025-01-01T12:30:45.123Z" "Checkpoint should contain timestamp"
 }
 
@@ -322,7 +322,7 @@ test_lesson_use_count_incremented() {
 
 test_cleanup_removes_old_orphans() {
     # Create a fake orphan checkpoint (no matching transcript)
-    local state_dir="$LESSONS_BASE/.citation-state"
+    local state_dir="$CLAUDE_RECALL_BASE/.citation-state"
     mkdir -p "$state_dir"
     local orphan_file="$state_dir/fake-orphan-session-id"
     echo "2025-01-01T00:00:00.000Z" > "$orphan_file"
@@ -345,7 +345,7 @@ test_cleanup_removes_old_orphans() {
 
 test_cleanup_keeps_recent_orphans() {
     # Create a fake orphan checkpoint (no matching transcript)
-    local state_dir="$LESSONS_BASE/.citation-state"
+    local state_dir="$CLAUDE_RECALL_BASE/.citation-state"
     mkdir -p "$state_dir"
     local orphan_file="$state_dir/fake-recent-orphan-id"
     echo "2025-01-01T00:00:00.000Z" > "$orphan_file"
@@ -372,7 +372,7 @@ test_cleanup_keeps_recent_orphans() {
 
 test_decay_reduces_stale_lesson_uses() {
     # Create a lesson with old last-used date
-    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    local lessons_file="$CLAUDE_RECALL_BASE/LESSONS.md"
     mkdir -p "$(dirname "$lessons_file")"
 
     # Create a lesson that was last used 60 days ago with 5 uses
@@ -389,7 +389,7 @@ test_decay_reduces_stale_lesson_uses() {
 EOF
 
     # Create a checkpoint to simulate activity
-    local state_dir="$LESSONS_BASE/.citation-state"
+    local state_dir="$CLAUDE_RECALL_BASE/.citation-state"
     mkdir -p "$state_dir"
     touch "$state_dir/recent-session"
 
@@ -406,7 +406,7 @@ EOF
 
 test_decay_skips_without_activity() {
     # Create a lesson with old last-used date
-    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    local lessons_file="$CLAUDE_RECALL_BASE/LESSONS.md"
     mkdir -p "$(dirname "$lessons_file")"
 
     local old_date=$(date -v-60d +%Y-%m-%d 2>/dev/null || date -d "60 days ago" +%Y-%m-%d)
@@ -422,7 +422,7 @@ test_decay_skips_without_activity() {
 EOF
 
     # Create decay state file (simulating previous decay ran)
-    echo "$(date +%s)" > "$LESSONS_BASE/.decay-last-run"
+    echo "$(date +%s)" > "$CLAUDE_RECALL_BASE/.decay-last-run"
 
     # Don't create any checkpoints (simulating no coding activity)
 
@@ -440,7 +440,7 @@ EOF
 
 test_decay_never_below_one() {
     # Create a lesson with uses=1 and old date
-    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    local lessons_file="$CLAUDE_RECALL_BASE/LESSONS.md"
     mkdir -p "$(dirname "$lessons_file")"
 
     local old_date=$(date -v-60d +%Y-%m-%d 2>/dev/null || date -d "60 days ago" +%Y-%m-%d)
@@ -456,7 +456,7 @@ test_decay_never_below_one() {
 EOF
 
     # Create a checkpoint to simulate activity
-    local state_dir="$LESSONS_BASE/.citation-state"
+    local state_dir="$CLAUDE_RECALL_BASE/.citation-state"
     mkdir -p "$state_dir"
     touch "$state_dir/recent-session"
 
@@ -489,14 +489,14 @@ EOF
 setup_todowrite() {
     setup
     # Create project-level lessons/approaches files
-    mkdir -p "$PROJECT_DIR/.coding-agent-lessons"
-    cat > "$PROJECT_DIR/.coding-agent-lessons/LESSONS.md" << 'EOF'
+    mkdir -p "$PROJECT_DIR/.claude-recall"
+    cat > "$PROJECT_DIR/.claude-recall/LESSONS.md" << 'EOF'
 # LESSONS.md - Project Level
 
 ## Active Lessons
 
 EOF
-    cat > "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" << 'EOF'
+    cat > "$PROJECT_DIR/.claude-recall/APPROACHES.md" << 'EOF'
 # APPROACHES.md - Active Work Tracking
 
 ## Active Approaches
@@ -519,7 +519,7 @@ test_todowrite_capture_creates_approach() {
     assert_contains "$output" "[approaches] Synced TodoWrite" "Should sync TodoWrite"
 
     # Approach file should have content
-    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "First task" \
+    assert_file_contains "$PROJECT_DIR/.claude-recall/APPROACHES.md" "First task" \
         "Approach should contain todo content"
 }
 
@@ -535,7 +535,7 @@ test_todowrite_capture_with_completed_todos() {
     run_hook "$transcript"
 
     # Approach should have tried entry for completed (format: "1. [success] Completed task")
-    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Completed task" \
+    assert_file_contains "$PROJECT_DIR/.claude-recall/APPROACHES.md" "success.*Completed task" \
         "Completed todos should become tried entries"
 }
 
@@ -554,7 +554,7 @@ test_todowrite_capture_uses_last_call() {
     run_hook "$transcript"
 
     # Should have the second task, not the first
-    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "Second call task" \
+    assert_file_contains "$PROJECT_DIR/.claude-recall/APPROACHES.md" "Second call task" \
         "Should use last TodoWrite call"
 }
 
@@ -575,9 +575,9 @@ test_todowrite_capture_handles_multiline_json() {
         "Multi-todo arrays should sync (jq -c fix)"
 
     # All completed todos should be recorded
-    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Task one" \
+    assert_file_contains "$PROJECT_DIR/.claude-recall/APPROACHES.md" "success.*Task one" \
         "First completed task should be recorded"
-    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Task two" \
+    assert_file_contains "$PROJECT_DIR/.claude-recall/APPROACHES.md" "success.*Task two" \
         "Second completed task should be recorded"
 }
 

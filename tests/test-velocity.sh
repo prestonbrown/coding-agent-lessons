@@ -9,7 +9,7 @@ MANAGER="$SCRIPT_DIR/../core/lessons-manager.sh"
 
 # Test state
 TEST_HOME=""
-LESSONS_BASE=""
+CLAUDE_RECALL_BASE=""
 PROJECT_DIR=""
 SYSTEM_LESSONS=""
 PROJECT_LESSONS=""
@@ -23,18 +23,18 @@ NC='\033[0m'
 
 setup() {
     TEST_HOME=$(mktemp -d)
-    LESSONS_BASE="$TEST_HOME/.config/coding-agent-lessons"
+    CLAUDE_RECALL_BASE="$TEST_HOME/.config/claude-recall"
     PROJECT_DIR="$TEST_HOME/test-project"
-    SYSTEM_LESSONS="$LESSONS_BASE/LESSONS.md"
-    PROJECT_LESSONS="$PROJECT_DIR/.coding-agent-lessons/LESSONS.md"
+    SYSTEM_LESSONS="$CLAUDE_RECALL_BASE/LESSONS.md"
+    PROJECT_LESSONS="$PROJECT_DIR/.claude-recall/LESSONS.md"
 
-    mkdir -p "$LESSONS_BASE" "$PROJECT_DIR/.coding-agent-lessons" "$LESSONS_BASE/.citation-state"
+    mkdir -p "$CLAUDE_RECALL_BASE" "$PROJECT_DIR/.claude-recall" "$CLAUDE_RECALL_BASE/.citation-state"
 
     # Create symlink for manager
-    ln -sf "$MANAGER" "$LESSONS_BASE/lessons-manager.sh"
+    ln -sf "$MANAGER" "$CLAUDE_RECALL_BASE/lessons-manager.sh"
 
     export HOME="$TEST_HOME"
-    export LESSONS_BASE
+    export CLAUDE_RECALL_BASE
     export PROJECT_DIR
 }
 
@@ -43,7 +43,7 @@ teardown() {
 }
 
 run_manager() {
-    PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" "$MANAGER" "$@"
+    PROJECT_DIR="$PROJECT_DIR" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" "$MANAGER" "$@"
 }
 
 assert_equals() {
@@ -117,7 +117,7 @@ get_lesson_stars() {
 
 create_recent_session() {
     # Create a checkpoint file to simulate recent activity
-    touch "$LESSONS_BASE/.citation-state/fake-session-$(date +%s)"
+    touch "$CLAUDE_RECALL_BASE/.citation-state/fake-session-$(date +%s)"
 }
 
 # Import just the lesson_rating function for direct testing

@@ -1,16 +1,19 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# Claude Code SessionStart hook - injects lessons context
+# Claude Recall SessionStart hook - injects lessons context
 
 set -euo pipefail
 
-# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
-LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
-LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
-BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
+# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
+CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+# Export legacy names for downstream compatibility
+LESSONS_BASE="$CLAUDE_RECALL_BASE"
+LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
+BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
+if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
@@ -28,7 +31,7 @@ is_enabled() {
 
 # Run decay if it's been more than DECAY_INTERVAL since last run
 run_decay_if_due() {
-    local decay_state="$LESSONS_BASE/.decay-last-run"
+    local decay_state="$CLAUDE_RECALL_BASE/.decay-last-run"
     local now=$(date +%s)
     local last_run=0
 

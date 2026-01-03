@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-CLI interface for the lessons manager.
+CLI interface for Claude Recall.
 
 This module provides the command-line interface for managing lessons and handoffs.
 (Handoffs were formerly called "approaches".)
@@ -27,17 +27,25 @@ except ImportError:
 
 
 def _get_lessons_base() -> Path:
-    """Get the system lessons base directory, checking RECALL_BASE first, then LESSONS_BASE."""
-    base_path = os.environ.get("RECALL_BASE") or os.environ.get("LESSONS_BASE")
+    """Get the system lessons base directory for Claude Recall.
+
+    Checks environment variables in order of precedence:
+    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
+    """
+    base_path = (
+        os.environ.get("CLAUDE_RECALL_BASE") or
+        os.environ.get("RECALL_BASE") or
+        os.environ.get("LESSONS_BASE")
+    )
     if base_path:
         return Path(base_path)
-    return Path.home() / ".config" / "coding-agent-lessons"
+    return Path.home() / ".config" / "claude-recall"
 
 
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Lessons Manager - Tool-agnostic AI coding agent lessons"
+        description="Claude Recall - AI coding agent memory system"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -229,7 +237,7 @@ def main():
         else:
             project_root = Path.cwd()
 
-    # Lessons base - use helper that checks RECALL_BASE first, then LESSONS_BASE
+    # Lessons base - use helper that checks CLAUDE_RECALL_BASE first, then RECALL_BASE, then LESSONS_BASE
     lessons_base = _get_lessons_base()
     manager = LessonsManager(lessons_base, project_root)
 

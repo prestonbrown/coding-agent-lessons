@@ -1,13 +1,20 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# lesson-reminder-hook.sh - Periodic lesson reminders for Claude Code
+# lesson-reminder-hook.sh - Periodic lesson reminders for Claude Recall
 #
 # Called on each UserPromptSubmit. Shows high-star lessons every Nth prompt.
 # Counter resets on session start via SessionStart hook.
 
 set -euo pipefail
 
-STATE_FILE="$HOME/.config/coding-agent-lessons/.reminder-state"
+# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
+CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+# Export legacy names for downstream compatibility
+LESSONS_BASE="$CLAUDE_RECALL_BASE"
+LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
+
+STATE_FILE="$CLAUDE_RECALL_BASE/.reminder-state"
 CONFIG_FILE="$HOME/.claude/settings.json"
 
 # Priority: env var > config file > default (12)
@@ -32,14 +39,27 @@ if (( COUNT % REMIND_EVERY != 0 )); then
   exit 0
 fi
 
-# Find lessons file (project first, then system)
+# Find lessons file (project first with fallback to legacy paths, then system)
 LESSONS_FILE=""
-if [[ -n "${PROJECT_ROOT:-}" ]] && [[ -f "$PROJECT_ROOT/.coding-agent-lessons/LESSONS.md" ]]; then
-  LESSONS_FILE="$PROJECT_ROOT/.coding-agent-lessons/LESSONS.md"
+if [[ -n "${PROJECT_ROOT:-}" ]]; then
+  # Check new path first, fall back to legacy paths
+  if [[ -f "$PROJECT_ROOT/.claude-recall/LESSONS.md" ]]; then
+    LESSONS_FILE="$PROJECT_ROOT/.claude-recall/LESSONS.md"
+  elif [[ -f "$PROJECT_ROOT/.recall/LESSONS.md" ]]; then
+    LESSONS_FILE="$PROJECT_ROOT/.recall/LESSONS.md"
+  elif [[ -f "$PROJECT_ROOT/.coding-agent-lessons/LESSONS.md" ]]; then
+    LESSONS_FILE="$PROJECT_ROOT/.coding-agent-lessons/LESSONS.md"
+  fi
+elif [[ -f ".claude-recall/LESSONS.md" ]]; then
+  LESSONS_FILE=".claude-recall/LESSONS.md"
+elif [[ -f ".recall/LESSONS.md" ]]; then
+  LESSONS_FILE=".recall/LESSONS.md"
 elif [[ -f ".coding-agent-lessons/LESSONS.md" ]]; then
   LESSONS_FILE=".coding-agent-lessons/LESSONS.md"
-elif [[ -f "$HOME/.config/coding-agent-lessons/LESSONS.md" ]]; then
-  LESSONS_FILE="$HOME/.config/coding-agent-lessons/LESSONS.md"
+fi
+# Fall back to system lessons
+if [[ -z "$LESSONS_FILE" ]] && [[ -f "$CLAUDE_RECALL_BASE/LESSONS.md" ]]; then
+  LESSONS_FILE="$CLAUDE_RECALL_BASE/LESSONS.md"
 fi
 
 if [[ -z "$LESSONS_FILE" ]]; then
@@ -56,8 +76,8 @@ if [[ -n "$HIGH_STAR" ]]; then
   echo ""
 
   # Log reminded lessons for effectiveness tracking (if debug enabled)
-  if [[ "${LESSONS_DEBUG:-0}" -ge 1 ]]; then
-    DEBUG_LOG="$HOME/.config/coding-agent-lessons/debug.log"
+  if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]]; then
+    DEBUG_LOG="$CLAUDE_RECALL_BASE/debug.log"
     LESSON_IDS=$(echo "$HIGH_STAR" | grep -oE '\[[LS][0-9]+\]' | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     echo "{\"timestamp\":\"$TIMESTAMP\",\"event\":\"reminder\",\"lesson_ids\":\"$LESSON_IDS\",\"prompt_count\":$COUNT}" >> "$DEBUG_LOG"

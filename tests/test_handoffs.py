@@ -7,7 +7,7 @@ This is a TDD test file - tests are written BEFORE the implementation.
 Run with: pytest tests/test_handoffs.py -v
 
 The handoffs system tracks ongoing work with tried steps and next steps.
-Storage location: <project_root>/.recall/HANDOFFS.md (or legacy .coding-agent-lessons/APPROACHES.md)
+Storage location: <project_root>/.claude-recall/HANDOFFS.md (or legacy .coding-agent-lessons/APPROACHES.md)
 
 File format:
     # APPROACHES.md - Active Work Tracking
@@ -62,7 +62,7 @@ except ImportError:
 @pytest.fixture
 def temp_lessons_base(tmp_path: Path) -> Path:
     """Create a temporary lessons base directory."""
-    lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+    lessons_base = tmp_path / ".config" / "claude-recall"
     lessons_base.mkdir(parents=True)
     return lessons_base
 
@@ -1635,7 +1635,7 @@ class TestHookCLIIntegration:
         # Set up environment
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # Run the CLI command (simulating what PLAN MODE: pattern does)
         # Use sys.executable for portability across Python installations
@@ -1664,7 +1664,7 @@ class TestHookCLIIntegration:
         """CLI should support 'start' as alias for 'add'."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         result = subprocess.run(
             [
@@ -1690,7 +1690,7 @@ class TestHookCLIIntegration:
         """CLI should support --phase in update command."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # First create an approach and capture the ID
         add_result = subprocess.run(
@@ -1727,7 +1727,7 @@ class TestHookCLIIntegration:
         """CLI should support --agent in update command."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # First create an approach and capture the ID
         add_result = subprocess.run(
@@ -1772,7 +1772,7 @@ class TestStopHookLastReference:
     @pytest.fixture
     def temp_dirs(self, tmp_path: Path):
         """Create temp directories for testing."""
-        lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+        lessons_base = tmp_path / ".config" / "claude-recall"
         project_root = tmp_path / "project"
         lessons_base.mkdir(parents=True)
         project_root.mkdir(parents=True)
@@ -1821,7 +1821,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(lessons_base),
+                "CLAUDE_RECALL_BASE": str(lessons_base),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1861,7 +1861,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(lessons_base),
+                "CLAUDE_RECALL_BASE": str(lessons_base),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1903,7 +1903,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(lessons_base),
+                "CLAUDE_RECALL_BASE": str(lessons_base),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -1945,7 +1945,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(lessons_base),
+                "CLAUDE_RECALL_BASE": str(lessons_base),
                 "PROJECT_DIR": str(project_root),
             },
         )
@@ -2138,7 +2138,7 @@ class TestHandoffCheckpointCLI:
         # Get the project root (coding-agent-lessons directory)
         repo_root = Path(__file__).parent.parent
 
-        monkeypatch.setenv("LESSONS_BASE", str(lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(lessons_base))
         monkeypatch.setenv("PROJECT_DIR", str(project_root))
 
         # Add approach and capture the ID
@@ -4003,7 +4003,7 @@ class TestHandoffReady:
 
         env = {
             **os.environ,
-            "LESSONS_BASE": str(temp_lessons_base),
+            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             "PROJECT_DIR": str(temp_project_root),
         }
 
@@ -4234,7 +4234,7 @@ class TestHandoffResume:
         # Create a handoff first
         env = {
             **os.environ,
-            "LESSONS_BASE": str(temp_lessons_base),
+            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             "PROJECT_DIR": str(temp_project_root),
         }
 
@@ -4281,7 +4281,7 @@ class TestSetContextCLI:
 
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # First create a handoff
         result = subprocess.run(
@@ -4397,7 +4397,7 @@ class TestSetContextCLI:
         """CLI should reject invalid JSON with helpful error."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # First create a handoff
         result = subprocess.run(
@@ -4434,7 +4434,7 @@ class TestSetContextCLI:
 
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         # First create a handoff
         result = subprocess.run(
@@ -4471,7 +4471,7 @@ class TestSetContextCLI:
 
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
-        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+        env["CLAUDE_RECALL_BASE"] = str(tmp_path / ".lessons")
 
         context_json = json.dumps({
             "summary": "Test",
@@ -4930,7 +4930,7 @@ class TestStealthHandoffCLI:
         """CLI should support --stealth flag for adding handoffs."""
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(temp_project_root)
-        env["LESSONS_BASE"] = str(temp_lessons_base)
+        env["CLAUDE_RECALL_BASE"] = str(temp_lessons_base)
 
         result = subprocess.run(
             [
@@ -4951,7 +4951,7 @@ class TestStealthHandoffCLI:
         assert "(stealth)" in result.stdout
 
         # Verify stored in LOCAL file
-        local_file = temp_project_root / ".recall" / "HANDOFFS_LOCAL.md"
+        local_file = temp_project_root / ".claude-recall" / "HANDOFFS_LOCAL.md"
         if not local_file.exists():
             local_file = temp_project_root / ".coding-agent-lessons" / "HANDOFFS_LOCAL.md"
 
@@ -5127,7 +5127,7 @@ class TestDependencyInferenceCLI:
             cwd=str(repo_root),
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
             capture_output=True,
@@ -5215,7 +5215,7 @@ class TestDependencyInferenceCLI:
             cwd=str(repo_root),
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
             capture_output=True,
@@ -5262,7 +5262,7 @@ class TestDependencyInferenceCLI:
             cwd=str(repo_root),
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
             capture_output=True,

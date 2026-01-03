@@ -1,13 +1,13 @@
 # Deployment Guide
 
-Installation, configuration, and management of the coding-agent-lessons system.
+Installation, configuration, and management of the Claude Recall system.
 
 ## Quick Install
 
 ```bash
 # Clone repository
-git clone https://github.com/prestonbrown/coding-agent-lessons.git
-cd coding-agent-lessons
+git clone https://github.com/prestonbrown/claude-recall.git
+cd claude-recall
 
 # Run installer
 ./install.sh
@@ -17,6 +17,22 @@ cd coding-agent-lessons
 ./install.sh --opencode  # OpenCode only
 ```
 
+## Migrating from coding-agent-lessons
+
+Run the installer to automatically migrate:
+```bash
+./install.sh
+```
+
+This migrates:
+- `~/.config/coding-agent-lessons/` → `~/.config/claude-recall/`
+- `.coding-agent-lessons/` → `.claude-recall/`
+
+Environment variables (all work, checked in order):
+- `CLAUDE_RECALL_BASE` (preferred)
+- `RECALL_BASE` (legacy)
+- `LESSONS_BASE` (legacy)
+
 ## Manual Installation
 
 ### Claude Code
@@ -24,7 +40,7 @@ cd coding-agent-lessons
 1. **Create directories:**
 ```bash
 mkdir -p ~/.claude/hooks
-mkdir -p ~/.config/coding-agent-lessons
+mkdir -p ~/.config/claude-recall
 ```
 
 2. **Copy files:**
@@ -35,7 +51,7 @@ cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/*.sh
 
 # Copy core manager
-cp core/cli.py ~/.config/coding-agent-lessons/
+cp core/cli.py ~/.config/claude-recall/
 ```
 
 3. **Configure Claude Code:**
@@ -73,11 +89,11 @@ cd ~/.opencode/plugins
 2. **Link or copy adapter:**
 ```bash
 # Symlink (recommended for development)
-ln -s /path/to/coding-agent-lessons/adapters/opencode lessons-plugin
+ln -s /path/to/claude-recall/adapters/opencode lessons-plugin
 
 # Or copy files
 mkdir -p lessons-plugin
-cp -r /path/to/coding-agent-lessons/adapters/opencode/* lessons-plugin/
+cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
 ```
 
 3. **Register plugin** (method depends on OpenCode version)
@@ -88,10 +104,10 @@ cp -r /path/to/coding-agent-lessons/adapters/opencode/* lessons-plugin/
 
 | Location | Purpose |
 |----------|---------|
-| `~/.config/coding-agent-lessons/` | System lessons base directory |
-| `~/.config/coding-agent-lessons/LESSONS.md` | System-wide lessons |
-| `~/.config/coding-agent-lessons/.decay-last-run` | Decay timestamp |
-| `~/.config/coding-agent-lessons/.citation-state/` | Citation checkpoints |
+| `~/.config/claude-recall/` | System lessons base directory |
+| `~/.config/claude-recall/LESSONS.md` | System-wide lessons |
+| `~/.config/claude-recall/.decay-last-run` | Decay timestamp |
+| `~/.config/claude-recall/.citation-state/` | Citation checkpoints |
 
 ### Claude Code Files
 
@@ -107,9 +123,9 @@ cp -r /path/to/coding-agent-lessons/adapters/opencode/* lessons-plugin/
 
 | Location | Purpose |
 |----------|---------|
-| `$PROJECT/.coding-agent-lessons/` | Project lessons directory |
-| `$PROJECT/.coding-agent-lessons/LESSONS.md` | Project-specific lessons |
-| `$PROJECT/.coding-agent-lessons/APPROACHES.md` | Active work tracking |
+| `$PROJECT/.claude-recall/` | Project lessons directory |
+| `$PROJECT/.claude-recall/LESSONS.md` | Project-specific lessons |
+| `$PROJECT/.claude-recall/APPROACHES.md` | Active work tracking |
 
 ### Repository vs Installed
 
@@ -122,7 +138,7 @@ adapters/claude-code/            → ~/.claude/hooks/
   session-end-hook.sh                session-end-hook.sh
   precompact-hook.sh                 precompact-hook.sh
 
-core/                            → ~/.config/coding-agent-lessons/
+core/                            → ~/.config/claude-recall/
   lessons_manager.py                 lessons_manager.py
 ```
 
@@ -133,7 +149,7 @@ core/                            → ~/.config/coding-agent-lessons/
 ### From Repository
 
 ```bash
-cd /path/to/coding-agent-lessons
+cd /path/to/claude-recall
 git pull
 ./install.sh
 ```
@@ -146,7 +162,7 @@ cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
 cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
 
 # Update manager
-cp core/lessons_manager.py ~/.config/coding-agent-lessons/
+cp core/lessons_manager.py ~/.config/claude-recall/
 ```
 
 ## Configuration
@@ -155,7 +171,9 @@ cp core/lessons_manager.py ~/.config/coding-agent-lessons/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LESSONS_BASE` | `~/.config/coding-agent-lessons` | System lessons location |
+| `CLAUDE_RECALL_BASE` | `~/.config/claude-recall` | System lessons location (preferred) |
+| `RECALL_BASE` | - | Legacy alias for system lessons location |
+| `LESSONS_BASE` | - | Legacy alias for system lessons location |
 | `PROJECT_DIR` | Current directory | Project root |
 | `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
 
@@ -180,11 +198,11 @@ Set `enabled: false` to temporarily disable the system.
 ```bash
 # Verify files exist
 ls -la ~/.claude/hooks/
-ls -la ~/.config/coding-agent-lessons/
+ls -la ~/.config/claude-recall/
 
 # Check permissions
 file ~/.claude/hooks/*.sh
-file ~/.config/coding-agent-lessons/lessons_manager.py
+file ~/.config/claude-recall/lessons_manager.py
 ```
 
 ### Test Hooks
@@ -194,8 +212,8 @@ file ~/.config/coding-agent-lessons/lessons_manager.py
 echo '{"cwd":"/tmp"}' | ~/.claude/hooks/inject-hook.sh
 
 # Test manager directly
-python3 ~/.config/coding-agent-lessons/lessons_manager.py list
-python3 ~/.config/coding-agent-lessons/lessons_manager.py approach list
+python3 ~/.config/claude-recall/lessons_manager.py list
+python3 ~/.config/claude-recall/lessons_manager.py approach list
 ```
 
 ### Verify in Session
@@ -228,20 +246,20 @@ Start a new Claude Code session. You should see:
 
 1. **Check lessons files exist:**
    ```bash
-   ls ~/.config/coding-agent-lessons/LESSONS.md
-   ls $PROJECT/.coding-agent-lessons/LESSONS.md
+   ls ~/.config/claude-recall/LESSONS.md
+   ls $PROJECT/.claude-recall/LESSONS.md
    ```
 
 2. **Test manager directly:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py inject 5
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py inject 5
    ```
 
 ### Citations Not Tracked
 
 1. **Check checkpoint directory:**
    ```bash
-   ls ~/.config/coding-agent-lessons/.citation-state/
+   ls ~/.config/claude-recall/.citation-state/
    ```
 
 2. **Verify transcript access:**
@@ -257,24 +275,24 @@ Start a new Claude Code session. You should see:
 
 1. **Check approaches file:**
    ```bash
-   cat $PROJECT/.coding-agent-lessons/APPROACHES.md
+   cat $PROJECT/.claude-recall/APPROACHES.md
    ```
 
 2. **Test approach injection:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py approach inject
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py approach inject
    ```
 
 ### Decay Not Running
 
 1. **Check decay state:**
    ```bash
-   cat ~/.config/coding-agent-lessons/.decay-last-run
+   cat ~/.config/claude-recall/.decay-last-run
    ```
 
 2. **Force decay manually:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py decay 30
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py decay 30
    ```
 
 ## Backup and Migration
@@ -283,18 +301,18 @@ Start a new Claude Code session. You should see:
 
 ```bash
 # Backup system lessons
-cp ~/.config/coding-agent-lessons/LESSONS.md ~/lessons-backup-$(date +%Y%m%d).md
+cp ~/.config/claude-recall/LESSONS.md ~/lessons-backup-$(date +%Y%m%d).md
 
 # Backup project lessons and approaches
-cp .coding-agent-lessons/LESSONS.md ~/project-lessons-$(date +%Y%m%d).md
-cp .coding-agent-lessons/APPROACHES.md ~/approaches-$(date +%Y%m%d).md
+cp .claude-recall/LESSONS.md ~/project-lessons-$(date +%Y%m%d).md
+cp .claude-recall/APPROACHES.md ~/approaches-$(date +%Y%m%d).md
 ```
 
 ### Migrate to New Machine
 
 1. **Copy lesson files:**
    ```bash
-   scp old-machine:~/.config/coding-agent-lessons/LESSONS.md ~/.config/coding-agent-lessons/
+   scp old-machine:~/.config/claude-recall/LESSONS.md ~/.config/claude-recall/
    ```
 
 2. **Install hooks** (see installation above)
@@ -305,7 +323,7 @@ cp .coding-agent-lessons/APPROACHES.md ~/approaches-$(date +%Y%m%d).md
 
 ```bash
 # Export project lessons
-cp $OLD_PROJECT/.coding-agent-lessons/LESSONS.md $NEW_PROJECT/.coding-agent-lessons/
+cp $OLD_PROJECT/.claude-recall/LESSONS.md $NEW_PROJECT/.claude-recall/
 
 # Merge lessons manually or use edit command to adjust IDs
 ```
@@ -333,7 +351,7 @@ rm ~/.claude/hooks/inject-hook.sh
 rm ~/.claude/hooks/stop-hook.sh
 
 # Remove system files
-rm -rf ~/.config/coding-agent-lessons/
+rm -rf ~/.config/claude-recall/
 
 # Remove from settings.json (manually edit)
 ```
@@ -363,13 +381,13 @@ rm -rf ~/.config/coding-agent-lessons/
 ```bash
 # Recommended permissions
 chmod 755 ~/.claude/hooks/*.sh
-chmod 644 ~/.config/coding-agent-lessons/lessons_manager.py
-chmod 644 ~/.config/coding-agent-lessons/LESSONS.md
-chmod 700 ~/.config/coding-agent-lessons/.citation-state/
+chmod 644 ~/.config/claude-recall/lessons_manager.py
+chmod 644 ~/.config/claude-recall/LESSONS.md
+chmod 700 ~/.config/claude-recall/.citation-state/
 ```
 
 ### Sensitive Data
 
 - Don't store secrets in lessons
-- Project lessons are in `.coding-agent-lessons/` (add to `.gitignore` if needed)
+- Project lessons are in `.claude-recall/` (add to `.gitignore` if needed)
 - System lessons contain cross-project patterns (review before sharing)

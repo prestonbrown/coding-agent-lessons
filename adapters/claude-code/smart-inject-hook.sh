@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# Claude Code UserPromptSubmit hook - injects lessons relevant to the user's query
+# Claude Recall UserPromptSubmit hook - injects lessons relevant to the user's query
 #
 # Uses Haiku to score lesson relevance against the user's prompt.
 # Only runs on first prompt of session to avoid latency on every message.
@@ -11,12 +11,15 @@ set -euo pipefail
 # This prevents infinite loops when Haiku subagents trigger this hook
 [[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
 
-# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
-LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
-LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
+# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
+CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+# Export legacy names for downstream compatibility
+LESSONS_BASE="$CLAUDE_RECALL_BASE"
+LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
+if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"

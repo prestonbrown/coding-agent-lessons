@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# Claude Code Stop hook - tracks lesson citations from AI responses
+# Claude Recall Stop hook - tracks lesson citations from AI responses
 #
 # Uses timestamp-based checkpointing to process citations incrementally:
 # - First run: process all entries, save latest timestamp
@@ -8,18 +8,21 @@
 
 set -uo pipefail
 
-# Support both new (RECALL_*) and old (LESSONS_*) env vars for backward compatibility
-LESSONS_BASE="${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/coding-agent-lessons}}"
-LESSONS_DEBUG="${RECALL_DEBUG:-${LESSONS_DEBUG:-}}"
-BASH_MANAGER="$LESSONS_BASE/lessons-manager.sh"
+# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
+CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
+CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+# Export legacy names for downstream compatibility
+LESSONS_BASE="$CLAUDE_RECALL_BASE"
+LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
+BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
 # Python manager - try installed location first, fall back to dev location
-if [[ -f "$LESSONS_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$LESSONS_BASE/cli.py"
+if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
-STATE_DIR="$LESSONS_BASE/.citation-state"
+STATE_DIR="$CLAUDE_RECALL_BASE/.citation-state"
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"

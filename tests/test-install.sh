@@ -20,7 +20,7 @@ NC='\033[0m'
 
 # Override HOME for testing
 export HOME="$TEST_DIR/home"
-export LESSONS_BASE="$HOME/.config/coding-agent-lessons"
+export CLAUDE_RECALL_BASE="$HOME/.config/claude-recall"
 
 setup() {
     rm -rf "$TEST_DIR"
@@ -145,9 +145,9 @@ test_install_core() {
     local output
     output=$("$INSTALLER" --claude 2>&1) || true
     
-    assert_file_exists "$LESSONS_BASE/lessons-manager.sh" "Core script should be installed"
-    assert_executable "$LESSONS_BASE/lessons-manager.sh" "Core script should be executable"
-    assert_file_exists "$LESSONS_BASE/LESSONS.md" "System lessons file should be created"
+    assert_file_exists "$CLAUDE_RECALL_BASE/lessons-manager.sh" "Core script should be installed"
+    assert_executable "$CLAUDE_RECALL_BASE/lessons-manager.sh" "Core script should be executable"
+    assert_file_exists "$CLAUDE_RECALL_BASE/LESSONS.md" "System lessons file should be created"
 }
 
 test_install_claude_hooks() {
@@ -248,10 +248,10 @@ EOF
     assert_file_not_exists "$HOME/.claude/LESSONS.md" "Old file should be moved"
     
     # New file should exist
-    assert_file_exists "$LESSONS_BASE/LESSONS.md" "New system file should exist"
+    assert_file_exists "$CLAUDE_RECALL_BASE/LESSONS.md" "New system file should exist"
     
     local content
-    content=$(cat "$LESSONS_BASE/LESSONS.md")
+    content=$(cat "$CLAUDE_RECALL_BASE/LESSONS.md")
     assert_contains "$content" "Old content" "Content should be migrated"
     
     # Backup should exist
@@ -279,10 +279,10 @@ EOF
     output=$("$INSTALLER" --migrate 2>&1)
     
     assert_file_not_exists "$project_dir/.claude/LESSONS.md" "Old project file should be moved"
-    assert_file_exists "$project_dir/.coding-agent-lessons/LESSONS.md" "New project file should exist"
+    assert_file_exists "$project_dir/.claude-recall/LESSONS.md" "New project file should exist"
     
     local content
-    content=$(cat "$project_dir/.coding-agent-lessons/LESSONS.md")
+    content=$(cat "$project_dir/.claude-recall/LESSONS.md")
     assert_contains "$content" "Project content" "Project content should be migrated"
 }
 
@@ -338,17 +338,17 @@ test_uninstall_removes_claude_hooks() {
 test_uninstall_preserves_lessons() {
     # First install and add some lessons
     "$INSTALLER" --claude >/dev/null 2>&1 || true
-    echo "# My lessons" >> "$LESSONS_BASE/LESSONS.md"
+    echo "# My lessons" >> "$CLAUDE_RECALL_BASE/LESSONS.md"
     
     # Then uninstall
     local output
     output=$("$INSTALLER" --uninstall 2>&1)
     
-    assert_file_exists "$LESSONS_BASE/LESSONS.md" "Lessons should be preserved"
-    assert_file_not_exists "$LESSONS_BASE/lessons-manager.sh" "Manager should be removed"
+    assert_file_exists "$CLAUDE_RECALL_BASE/LESSONS.md" "Lessons should be preserved"
+    assert_file_not_exists "$CLAUDE_RECALL_BASE/lessons-manager.sh" "Manager should be removed"
     
     local content
-    content=$(cat "$LESSONS_BASE/LESSONS.md")
+    content=$(cat "$CLAUDE_RECALL_BASE/LESSONS.md")
     assert_contains "$content" "My lessons" "Lesson content should be preserved"
 }
 
@@ -391,7 +391,7 @@ test_system_lessons_file_format() {
     "$INSTALLER" --claude >/dev/null 2>&1 || true
     
     local content
-    content=$(cat "$LESSONS_BASE/LESSONS.md")
+    content=$(cat "$CLAUDE_RECALL_BASE/LESSONS.md")
     
     assert_contains "$content" "System Level" "Should indicate system level"
     assert_contains "$content" "[S###]" "Should explain system lesson format"

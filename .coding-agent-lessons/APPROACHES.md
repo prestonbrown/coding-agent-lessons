@@ -1,15 +1,15 @@
-# APPROACHES.md - Active Work Tracking
+# HANDOFFS.md - Active Work Tracking
 
-> Track ongoing work with tried approaches and next steps.
+> Track ongoing work with tried steps and next steps.
 > When completed, review for lessons to extract.
 
-## Active Approaches
+## Active Handoffs
 
 
 ### [A003] Add promotable flag to lessons
-- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Status**: not_started | **Phase**: implementing | **Agent**: user
 - **Created**: 2025-12-29 | **Updated**: 2026-01-02
-- **Files**: 
+- **Refs**: 
 - **Description**: 
 - **Checkpoint**: [A007] Recall: Context Engineering System
 - **Last Session**: 2026-01-02
@@ -24,15 +24,19 @@
 7. [success] [A007] Phase 9: SessionEnd hook
 8. [success] [A007] Phase 10: Dependency inference
 9. [success] [A007] Final system code review
+10. [success] [A007] Recall: Context Engineering System
+11. [success] [A007] Phases 0-10: Implementation
+12. [success] [A007] Code review fixes: All issues
+13. [success] [A007] Final review: A+ achieved
 
-**Next**: [A007] Final system code review
+**Next**: Rename: Update all code paths from coding-agent-lessons to recall; Rename: Update install.sh for new paths; Rename: Update env vars LESSONS_BASE → RECALL_BASE; Rename: Update .coding-agent-lessons → .recall references; Rename: Migration script for existing installs (and 1 more)
 
 ---
 
 ### [A004] Debug approach parsing in stop-hook
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-29 | **Updated**: 2025-12-29
-- **Files**: 
+- **Refs**: 
 - **Description**: 
 
 **Tried**:
@@ -44,7 +48,7 @@
 ### [A005] Context handoff and smart injection system
 - **Status**: in_progress | **Phase**: implementing | **Agent**: user
 - **Created**: 2025-12-30 | **Updated**: 2026-01-01
-- **Files**: 
+- **Refs**: 
 - **Description**: PreCompact hook captures progress before compaction. Remaining: relevance scoring, smart injection, context budget.
 - **Checkpoint**: Compact injection implemented: 90% token reduction via _summarize_tried_steps() and _extract_themes(). Auto-complete on Final/Done patterns. Auto-phase based on keywords. Remaining: relevance scoring for which approaches to inject, structured checkpoint format.
 - **Last Session**: 2026-01-01
@@ -71,8 +75,70 @@
 ### [A006] Fix approach system bugs
 - **Status**: completed | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-30 | **Updated**: 2025-12-30
-- **Files**: 
+- **Refs**: 
 - **Description**: 
+
+**Tried**:
+
+**Next**: 
+
+---
+
+### [hf-e6b28ee] Test Plan Mode Feature
+- **Status**: not_started | **Phase**: research | **Agent**: plan
+- **Created**: 2026-01-02 | **Updated**: 2026-01-02
+- **Refs**: 
+- **Description**: 
+
+**Tried**:
+
+**Next**: 
+
+---
+
+### [hf-a895bce] Test Start Alias
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: 2026-01-02 | **Updated**: 2026-01-02
+- **Refs**: 
+- **Description**: Description via start
+
+**Tried**:
+
+**Next**: 
+
+---
+
+### [hf-7ae1e52] Test
+- **Status**: not_started | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-02 | **Updated**: 2026-01-02
+- **Refs**: 
+- **Description**: 
+
+**Tried**:
+
+**Next**: 
+
+---
+
+### [hf-b95893e] Test
+- **Status**: not_started | **Phase**: research | **Agent**: general-purpose
+- **Created**: 2026-01-02 | **Updated**: 2026-01-02
+- **Refs**: 
+- **Description**: 
+
+**Tried**:
+
+**Next**: 
+
+---
+
+### [hf-d44d6fd] Test approach
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: 2026-01-02 | **Updated**: 2026-01-02
+- **Refs**: 
+- **Description**: 
+- **Checkpoint**: Progress: tests passing
+- **Last Session**: 2026-01-02
 
 **Tried**:
 

@@ -1,6 +1,6 @@
 # Testing Guide
 
-Testing infrastructure, running tests, and writing new tests for the coding-agent-lessons system.
+Testing infrastructure, running tests, and writing new tests for the Claude Recall system.
 
 ## Test Framework
 
@@ -80,13 +80,13 @@ def temp_env(tmp_path):
     lessons_base.mkdir()
 
     # Create lessons directories
-    (project_dir / ".coding-agent-lessons").mkdir()
+    (project_dir / ".claude-recall").mkdir()
 
     return {
         "project_dir": str(project_dir),
         "lessons_base": str(lessons_base),
-        "project_lessons": project_dir / ".coding-agent-lessons" / "LESSONS.md",
-        "approaches_file": project_dir / ".coding-agent-lessons" / "APPROACHES.md",
+        "project_lessons": project_dir / ".claude-recall" / "LESSONS.md",
+        "approaches_file": project_dir / ".claude-recall" / "APPROACHES.md",
         "system_lessons": lessons_base / "LESSONS.md",
     }
 ```
@@ -152,7 +152,7 @@ def test_cli_approach_add(temp_env):
         text=True,
         env={
             "PROJECT_DIR": temp_env["project_dir"],
-            "LESSONS_BASE": temp_env["lessons_base"],
+            "CLAUDE_RECALL_BASE": temp_env["lessons_base"],
         }
     )
 
@@ -222,7 +222,7 @@ def lessons_with_velocity(temp_env):
 - **Uses**: 5 | **Velocity**: 2.5 | **Tokens**: 30 | **Learned**: 2025-12-01 | **Last**: 2025-12-28 | **Source**: user
 - Test content
 """
-    (temp_env["project_dir"] / ".coding-agent-lessons" / "LESSONS.md").write_text(content)
+    (temp_env["project_dir"] / ".claude-recall" / "LESSONS.md").write_text(content)
     return temp_env
 ```
 
@@ -278,9 +278,9 @@ def test_file_not_found(temp_env, monkeypatch):
 
 ```python
 def test_custom_lessons_base(temp_env, monkeypatch):
-    """Test custom LESSONS_BASE location."""
+    """Test custom CLAUDE_RECALL_BASE location."""
     custom_base = temp_env["lessons_base"] + "/custom"
-    monkeypatch.setenv("LESSONS_BASE", custom_base)
+    monkeypatch.setenv("CLAUDE_RECALL_BASE", custom_base)
 
     # Manager should use custom location
     manager = LessonsManager()
@@ -348,14 +348,14 @@ def test_cli_example(self, temp_lessons_base: Path, temp_project_root: Path):
         ["python3", "core/lessons_manager.py", "list"],
         env={
             **os.environ,
-            "LESSONS_BASE": str(temp_lessons_base),
+            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             "PROJECT_DIR": str(temp_project_root),
         },
     )
 ```
 
-- `temp_lessons_base`: System lessons location (`~/.config/coding-agent-lessons` equivalent)
-- `temp_project_root`: Project root containing `.coding-agent-lessons/`
+- `temp_lessons_base`: System lessons location (`~/.config/claude-recall` equivalent)
+- `temp_project_root`: Project root containing `.claude-recall/`
 - Both are `Path` objects - convert with `str()` for subprocess env
 
 ### `temp_env` (Dict-based, for internal tests)
@@ -395,9 +395,9 @@ manager.add_lesson("pattern", "Title", "Content")  # TypeError!
 
 | Component | Development Path | Installed Path |
 |-----------|-----------------|----------------|
-| Python CLI | `core/cli.py` | `~/.config/coding-agent-lessons/cli.py` |
-| Debug logger | `core/debug_logger.py` | `~/.config/coding-agent-lessons/debug_logger.py` |
-| Bash wrapper | `core/lessons-manager.sh` | `~/.config/coding-agent-lessons/lessons-manager.sh` |
+| Python CLI | `core/cli.py` | `~/.config/claude-recall/cli.py` |
+| Debug logger | `core/debug_logger.py` | `~/.config/claude-recall/debug_logger.py` |
+| Bash wrapper | `core/lessons-manager.sh` | `~/.config/claude-recall/lessons-manager.sh` |
 | Inject hook | `adapters/claude-code/inject-hook.sh` | `~/.claude/hooks/inject-hook.sh` |
 | Smart inject | `adapters/claude-code/smart-inject-hook.sh` | `~/.claude/hooks/smart-inject-hook.sh` |
 | Stop hook | `adapters/claude-code/stop-hook.sh` | `~/.claude/hooks/stop-hook.sh` |
@@ -421,7 +421,7 @@ When testing CLI commands via subprocess, always set both environment variables:
 ```python
 env={
     **os.environ,  # Preserve PATH, HOME, etc.
-    "LESSONS_BASE": str(temp_lessons_base),
+    "CLAUDE_RECALL_BASE": str(temp_lessons_base),
     "PROJECT_DIR": str(temp_project_root),
 }
 ```

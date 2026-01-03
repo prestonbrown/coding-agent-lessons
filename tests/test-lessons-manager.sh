@@ -19,13 +19,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Override paths for testing
-export LESSONS_BASE="$TEST_DIR/.config/coding-agent-lessons"
+export CLAUDE_RECALL_BASE="$TEST_DIR/.config/claude-recall"
 export PROJECT_DIR="$TEST_DIR/project"
 
 setup() {
     rm -rf "$TEST_DIR"
     mkdir -p "$TEST_DIR/project/.git"  # Fake git repo
-    mkdir -p "$LESSONS_BASE"
+    mkdir -p "$CLAUDE_RECALL_BASE"
 }
 
 teardown() {
@@ -141,7 +141,7 @@ test_add_project_lesson() {
     output=$("$MANAGER" add pattern "Test Lesson" "This is test content")
     assert_contains "$output" "Added project lesson L001" "Should confirm lesson added"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     assert_file_exists "$lessons_file" "Lessons file should be created"
     
     local content
@@ -158,7 +158,7 @@ test_add_system_lesson() {
     output=$("$MANAGER" add-system gotcha "System Gotcha" "Always check X before Y")
     assert_contains "$output" "Added system lesson S001" "Should confirm system lesson added"
     
-    local lessons_file="$LESSONS_BASE/LESSONS.md"
+    local lessons_file="$CLAUDE_RECALL_BASE/LESSONS.md"
     assert_file_exists "$lessons_file" "System lessons file should be created"
     
     local content
@@ -175,7 +175,7 @@ test_add_multiple_lessons_increment_id() {
     
     assert_contains "$output" "L003" "Third lesson should be L003"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "[L001]" "Should have L001"
@@ -210,7 +210,7 @@ test_cite_lesson() {
     output=$("$MANAGER" cite L001)
     assert_contains "$output" "OK:2" "Cite should return new count"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "**Uses**: 2" "Uses should be incremented"
@@ -224,7 +224,7 @@ test_cite_updates_last_date() {
     
     "$MANAGER" cite L001 >/dev/null
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "**Last**: $today" "Last date should be updated"
@@ -254,7 +254,7 @@ test_edit_lesson() {
     output=$("$MANAGER" edit L001 "Updated content")
     assert_contains "$output" "Updated L001" "Should confirm update"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "Updated content" "Content should be updated"
@@ -277,7 +277,7 @@ test_delete_lesson() {
     output=$("$MANAGER" delete L001)
     assert_contains "$output" "Deleted L001" "Should confirm deletion"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_not_contains "$content" "Delete Me" "Deleted lesson should be gone"
@@ -400,7 +400,7 @@ test_inject_empty() {
 test_star_rating_initial() {
     "$MANAGER" add pattern "Stars Test" "Content" >/dev/null
 
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     # 1 use, 0 velocity = [*----|-----] (uses|velocity format)
@@ -415,7 +415,7 @@ test_star_rating_increases() {
         "$MANAGER" cite L001 >/dev/null
     done
 
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     # 5 uses, 4 velocity (citations add velocity) = [**---|***--] (uses|velocity format)
@@ -455,7 +455,7 @@ test_project_root_detection() {
     "$MANAGER" add pattern "Nested Test" "Content" >/dev/null
     
     # Should create lessons file at project root, not nested dir
-    local expected_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local expected_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     assert_file_exists "$expected_file" "Lessons file should be at project root"
 }
 
@@ -466,7 +466,7 @@ test_concurrent_operations() {
     done
     wait
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local count
     count=$(grep -c "^### \[L" "$lessons_file" || echo 0)
     
@@ -479,7 +479,7 @@ test_special_characters_in_content() {
     output=$("$MANAGER" add pattern "Special Chars" "Content with 'quotes' and \"double quotes\" and \$vars")
     assert_contains "$output" "L001" "Should handle special characters"
     
-    local lessons_file="$TEST_DIR/project/.coding-agent-lessons/LESSONS.md"
+    local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "quotes" "Content should be preserved"

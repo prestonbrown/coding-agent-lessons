@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-Debug logging for lessons manager.
+Debug logging for Claude Recall.
 
-Outputs JSON lines format to ~/.config/coding-agent-lessons/debug.log
-when RECALL_DEBUG or LESSONS_DEBUG is set.
+Outputs JSON lines format to ~/.config/claude-recall/debug.log
+when CLAUDE_RECALL_DEBUG, RECALL_DEBUG, or LESSONS_DEBUG is set.
 
 Levels:
   0 or unset: disabled
@@ -24,9 +24,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-# Configuration - support both new and old env var names
-DEBUG_ENV_VAR = "RECALL_DEBUG"  # New name
-DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Old name for backward compat
+# Configuration - support multiple env var names for backward compatibility
+DEBUG_ENV_VAR = "CLAUDE_RECALL_DEBUG"  # Primary name
+DEBUG_ENV_VAR_FALLBACK = "RECALL_DEBUG"  # Fallback
+DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Legacy name for backward compat
 LOG_FILE_NAME = "debug.log"
 MAX_LOG_SIZE_MB = 50  # 50MB keeps ~500K events
 MAX_LOG_FILES = 3  # 3 files = 150MB max disk usage
@@ -46,10 +47,15 @@ def _get_session_id() -> str:
 def _get_debug_level() -> int:
     """Get the configured debug level from environment.
 
-    Checks RECALL_DEBUG first, then falls back to LESSONS_DEBUG for backward compat.
+    Checks environment variables in order of precedence:
+    CLAUDE_RECALL_DEBUG → RECALL_DEBUG → LESSONS_DEBUG → 0
     """
-    # Check new env var first, fall back to old
-    level = os.environ.get(DEBUG_ENV_VAR) or os.environ.get(DEBUG_ENV_VAR_LEGACY, "0")
+    level = (
+        os.environ.get(DEBUG_ENV_VAR) or
+        os.environ.get(DEBUG_ENV_VAR_FALLBACK) or
+        os.environ.get(DEBUG_ENV_VAR_LEGACY) or
+        "0"
+    )
     try:
         return int(level)
     except ValueError:
@@ -60,12 +66,14 @@ def _get_debug_level() -> int:
 def _get_log_path() -> Path:
     """Get the log file path.
 
-    Checks RECALL_BASE first, then falls back to LESSONS_BASE for backward compat.
+    Checks environment variables in order of precedence:
+    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
     """
     lessons_base = Path(
-        os.environ.get("RECALL_BASE")
+        os.environ.get("CLAUDE_RECALL_BASE")
+        or os.environ.get("RECALL_BASE")
         or os.environ.get("LESSONS_BASE")
-        or (Path.home() / ".config" / "coding-agent-lessons")
+        or (Path.home() / ".config" / "claude-recall")
     )
     return lessons_base / LOG_FILE_NAME
 
@@ -96,9 +104,9 @@ def _rotate_if_needed(log_path: Path) -> None:
 
 class DebugLogger:
     """
-    JSON lines debug logger for lessons manager.
+    JSON lines debug logger for Claude Recall.
 
-    All methods are no-ops when LESSONS_DEBUG is 0 or unset.
+    All methods are no-ops when CLAUDE_RECALL_DEBUG is 0 or unset.
     """
 
     def __init__(self) -> None:

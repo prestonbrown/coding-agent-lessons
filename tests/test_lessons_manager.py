@@ -51,7 +51,7 @@ except ImportError:
 @pytest.fixture
 def temp_lessons_base(tmp_path: Path) -> Path:
     """Create a temporary lessons base directory."""
-    lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+    lessons_base = tmp_path / ".config" / "claude-recall"
     lessons_base.mkdir(parents=True)
     return lessons_base
 
@@ -1087,7 +1087,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1115,7 +1115,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1147,7 +1147,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1176,7 +1176,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1205,7 +1205,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1234,7 +1234,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1263,7 +1263,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1296,7 +1296,7 @@ class TestCLI:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1332,7 +1332,7 @@ class TestCaptureHook:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1369,7 +1369,7 @@ class TestCaptureHook:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1387,11 +1387,11 @@ class TestHookPathResolution:
     """Tests for hook Python manager path resolution."""
 
     def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_project_root: Path):
-        """Hooks should use $LESSONS_BASE/cli.py when it exists (installed mode)."""
+        """Hooks should use $CLAUDE_RECALL_BASE/cli.py when it exists (installed mode)."""
         import shutil
         from core import LessonsManager
 
-        # Copy Python manager and all modules to LESSONS_BASE (simulating installed state)
+        # Copy Python manager and all modules to CLAUDE_RECALL_BASE (simulating installed state)
         core_dir = Path(__file__).parent.parent / "core"
         modules = [
             "cli.py",
@@ -1436,7 +1436,7 @@ class TestHookPathResolution:
             cwd="/tmp",  # Run from different directory
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1470,7 +1470,7 @@ class TestHookPathResolution:
             text=True,
             env={
                 **os.environ,
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
         )
@@ -1502,12 +1502,12 @@ class TestReminderHook:
         }))
 
         # Create state file at count 2 (next will be 3, triggering reminder)
-        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir = tmp_path / ".config" / "claude-recall"
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".reminder-state").write_text("2")
 
         # Create a lessons file with high-star lesson
-        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
         (lessons_dir / "LESSONS.md").write_text(
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
@@ -1521,7 +1521,7 @@ class TestReminderHook:
             env={
                 **os.environ,
                 "HOME": str(tmp_path),
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
         )
 
@@ -1540,11 +1540,11 @@ class TestReminderHook:
         }))
 
         # State at count 4, env says remind every 5
-        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir = tmp_path / ".config" / "claude-recall"
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".reminder-state").write_text("4")
 
-        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
         (lessons_dir / "LESSONS.md").write_text(
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
@@ -1559,7 +1559,7 @@ class TestReminderHook:
                 **os.environ,
                 "HOME": str(tmp_path),
                 "LESSON_REMIND_EVERY": "5",  # Override config
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
         )
 
@@ -1570,11 +1570,11 @@ class TestReminderHook:
         """Default remindEvery=12 when no config file exists."""
 
         # No config file, state at 11
-        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir = tmp_path / ".config" / "claude-recall"
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".reminder-state").write_text("11")
 
-        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
         (lessons_dir / "LESSONS.md").write_text(
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
@@ -1588,7 +1588,7 @@ class TestReminderHook:
             env={
                 **os.environ,
                 "HOME": str(tmp_path),
-                "LESSONS_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
         )
 
@@ -1596,13 +1596,13 @@ class TestReminderHook:
         assert "LESSON CHECK" in result.stdout  # Count 12, default reminder
 
     def test_reminder_logs_when_debug_enabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
-        """Reminder logs to debug.log when LESSONS_DEBUG>=1."""
+        """Reminder logs to debug.log when CLAUDE_RECALL_DEBUG>=1."""
 
-        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir = tmp_path / ".config" / "claude-recall"
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".reminder-state").write_text("11")
 
-        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
         (lessons_dir / "LESSONS.md").write_text(
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
@@ -1617,8 +1617,8 @@ class TestReminderHook:
             env={
                 **os.environ,
                 "HOME": str(tmp_path),
-                "LESSONS_BASE": str(temp_lessons_base),
-                "LESSONS_DEBUG": "1",
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_DEBUG": "1",
             },
         )
 
@@ -1636,23 +1636,23 @@ class TestReminderHook:
         assert log_entry["prompt_count"] == 12
 
     def test_reminder_no_log_when_debug_disabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
-        """No debug log when LESSONS_DEBUG is not set."""
+        """No debug log when CLAUDE_RECALL_DEBUG is not set."""
 
-        state_dir = tmp_path / ".config" / "coding-agent-lessons"
+        state_dir = tmp_path / ".config" / "claude-recall"
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".reminder-state").write_text("11")
 
-        lessons_dir = temp_project_root / ".coding-agent-lessons"
+        lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
         (lessons_dir / "LESSONS.md").write_text(
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
         )
 
-        # Build env without LESSONS_DEBUG
-        env = {k: v for k, v in os.environ.items() if k != "LESSONS_DEBUG"}
+        # Build env without any debug env vars
+        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_RECALL_DEBUG", "LESSONS_DEBUG")}
         env.update({
             "HOME": str(tmp_path),
-            "LESSONS_BASE": str(temp_lessons_base),
+            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
         })
 
         result = subprocess.run(

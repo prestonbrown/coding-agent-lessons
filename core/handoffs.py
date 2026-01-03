@@ -73,8 +73,13 @@ except ImportError:
     )
 
 
+def _get_claude_recall_dir() -> str:
+    """Get the per-project data directory name for Claude Recall."""
+    return ".claude-recall"
+
+
 def _get_recall_dir() -> str:
-    """Get the per-project data directory name, checking for new name first."""
+    """Get the fallback per-project data directory name."""
     return ".recall"
 
 
@@ -122,18 +127,25 @@ class HandoffsMixin:
     # -------------------------------------------------------------------------
 
     def _get_project_data_dir(self) -> Path:
-        """Get the project data directory, preferring .recall/ over .coding-agent-lessons/."""
+        """Get the project data directory, preferring .claude-recall/ over legacy paths.
+
+        Checks for directories in order of precedence:
+        .claude-recall/ → .recall/ → .coding-agent-lessons/ → default (.claude-recall/)
+        """
+        claude_recall_dir = self.project_root / _get_claude_recall_dir()
         recall_dir = self.project_root / _get_recall_dir()
         legacy_dir = self.project_root / _get_legacy_dir()
 
-        # Prefer new directory if it exists, otherwise use legacy
-        if recall_dir.exists():
+        # Prefer new directory if it exists, otherwise check legacy paths
+        if claude_recall_dir.exists():
+            return claude_recall_dir
+        elif recall_dir.exists():
             return recall_dir
         elif legacy_dir.exists():
             return legacy_dir
         else:
             # Default to new directory for new projects
-            return recall_dir
+            return claude_recall_dir
 
     @property
     def project_handoffs_file(self) -> Path:
@@ -147,8 +159,8 @@ class HandoffsMixin:
         elif old_path.exists():
             return old_path
         else:
-            # Default to new name for new files
-            return self.project_root / _get_recall_dir() / "HANDOFFS.md"
+            # Default to new name for new files in .claude-recall/
+            return self.project_root / _get_claude_recall_dir() / "HANDOFFS.md"
 
     @property
     def project_handoffs_archive(self) -> Path:
@@ -162,8 +174,8 @@ class HandoffsMixin:
         elif old_path.exists():
             return old_path
         else:
-            # Default to new name for new files
-            return self.project_root / _get_recall_dir() / "HANDOFFS_ARCHIVE.md"
+            # Default to new name for new files in .claude-recall/
+            return self.project_root / _get_claude_recall_dir() / "HANDOFFS_ARCHIVE.md"
 
     @property
     def project_stealth_handoffs_file(self) -> Path:

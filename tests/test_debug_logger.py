@@ -28,7 +28,7 @@ from core.debug_logger import (
 @pytest.fixture
 def temp_lessons_base(tmp_path: Path) -> Path:
     """Create a temporary lessons base directory."""
-    lessons_base = tmp_path / ".config" / "coding-agent-lessons"
+    lessons_base = tmp_path / ".config" / "claude-recall"
     lessons_base.mkdir(parents=True)
     return lessons_base
 
@@ -44,6 +44,9 @@ def reset_logger_state():
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     """Clean up environment variables after each test."""
+    monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+    monkeypatch.delenv("CLAUDE_RECALL_BASE", raising=False)
+    # Also clean legacy env vars for backward compat
     monkeypatch.delenv("LESSONS_DEBUG", raising=False)
     monkeypatch.delenv("LESSONS_BASE", raising=False)
 
@@ -57,39 +60,40 @@ class TestDebugLevel:
     """Test debug level parsing."""
 
     def test_disabled_by_default(self, monkeypatch):
-        """Logger should be disabled when LESSONS_DEBUG is not set."""
+        """Logger should be disabled when CLAUDE_RECALL_DEBUG is not set."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
         monkeypatch.delenv("LESSONS_DEBUG", raising=False)
         assert _get_debug_level() == 0
 
     def test_level_0_disabled(self, monkeypatch):
         """Level 0 should disable logging."""
-        monkeypatch.setenv("LESSONS_DEBUG", "0")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "0")
         assert _get_debug_level() == 0
 
     def test_level_1_info(self, monkeypatch):
         """Level 1 should enable info logging."""
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
         assert _get_debug_level() == 1
 
     def test_level_2_debug(self, monkeypatch):
         """Level 2 should enable debug logging."""
-        monkeypatch.setenv("LESSONS_DEBUG", "2")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
         assert _get_debug_level() == 2
 
     def test_level_3_trace(self, monkeypatch):
         """Level 3 should enable trace logging."""
-        monkeypatch.setenv("LESSONS_DEBUG", "3")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "3")
         assert _get_debug_level() == 3
 
     def test_truthy_values(self, monkeypatch):
         """Truthy string values should enable level 1."""
         for value in ["true", "True", "TRUE", "yes", "on"]:
-            monkeypatch.setenv("LESSONS_DEBUG", value)
+            monkeypatch.setenv("CLAUDE_RECALL_DEBUG", value)
             assert _get_debug_level() == 1
 
     def test_invalid_values(self, monkeypatch):
         """Invalid values should disable logging."""
-        monkeypatch.setenv("LESSONS_DEBUG", "invalid")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "invalid")
         assert _get_debug_level() == 0
 
 
@@ -103,27 +107,27 @@ class TestDebugLogger:
 
     def test_enabled_property(self, monkeypatch, temp_lessons_base):
         """Enabled property should reflect level."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
 
-        monkeypatch.setenv("LESSONS_DEBUG", "0")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "0")
         logger = DebugLogger()
         assert not logger.enabled
 
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
         logger = DebugLogger()
         assert logger.enabled
 
     def test_level_property(self, monkeypatch, temp_lessons_base):
         """Level property should return configured level."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "2")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
         logger = DebugLogger()
         assert logger.level == 2
 
     def test_no_write_when_disabled(self, monkeypatch, temp_lessons_base):
         """No log file should be created when disabled."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "0")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "0")
 
         logger = DebugLogger()
         logger.session_start(
@@ -150,8 +154,8 @@ class TestJsonLinesOutput:
 
     def test_writes_json_lines(self, monkeypatch, temp_lessons_base):
         """Should write valid JSON lines to log file."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
         logger.lesson_added(
@@ -178,8 +182,8 @@ class TestJsonLinesOutput:
 
     def test_session_start_event(self, monkeypatch, temp_lessons_base):
         """Should log session_start with correct fields."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
         logger.session_start(
@@ -203,8 +207,8 @@ class TestJsonLinesOutput:
 
     def test_citation_event(self, monkeypatch, temp_lessons_base):
         """Should log citation with before/after values."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
         logger.citation(
@@ -229,8 +233,8 @@ class TestJsonLinesOutput:
 
     def test_approach_events(self, monkeypatch, temp_lessons_base):
         """Should log handoff lifecycle events (backward compat: approach_* aliases)."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
 
@@ -285,8 +289,8 @@ class TestLevelGating:
 
     def test_info_events_at_level_1(self, monkeypatch, temp_lessons_base):
         """Info events should log at level 1."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
         logger.lesson_added("L001", "project", "pattern", "human", 10, 50)
@@ -296,8 +300,8 @@ class TestLevelGating:
 
     def test_debug_events_not_at_level_1(self, monkeypatch, temp_lessons_base):
         """Debug events should not log at level 1."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger = DebugLogger()
         logger.injection_generated(
@@ -313,8 +317,8 @@ class TestLevelGating:
 
     def test_debug_events_at_level_2(self, monkeypatch, temp_lessons_base):
         """Debug events should log at level 2."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "2")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "2")
 
         logger = DebugLogger()
         logger.injection_generated(
@@ -333,8 +337,8 @@ class TestLevelGating:
 
     def test_trace_events_at_level_3(self, monkeypatch, temp_lessons_base):
         """Trace events should log at level 3."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "3")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "3")
 
         logger = DebugLogger()
         with logger.trace_file_io("read", "/test/file.md"):
@@ -380,8 +384,8 @@ class TestGlobalLogger:
 
     def test_get_logger_returns_same_instance(self, monkeypatch, temp_lessons_base):
         """get_logger should return the same instance."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger1 = get_logger()
         logger2 = get_logger()
@@ -389,8 +393,8 @@ class TestGlobalLogger:
 
     def test_reset_logger_clears_instance(self, monkeypatch, temp_lessons_base):
         """reset_logger should clear the global instance."""
-        monkeypatch.setenv("LESSONS_BASE", str(temp_lessons_base))
-        monkeypatch.setenv("LESSONS_DEBUG", "1")
+        monkeypatch.setenv("CLAUDE_RECALL_BASE", str(temp_lessons_base))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
 
         logger1 = get_logger()
         reset_logger()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-LessonsManager class - Main entry point for the lessons system.
+LessonsManager class - Main entry point for Claude Recall.
 
 This module provides the LessonsManager class that combines lesson and handoff
 functionality through composition of mixins.
@@ -20,27 +20,41 @@ except ImportError:
 
 
 def _get_lessons_base() -> Path:
-    """Get the system lessons base directory, checking RECALL_BASE first, then LESSONS_BASE."""
-    # Check new env var first, fall back to old
-    base_path = os.environ.get("RECALL_BASE") or os.environ.get("LESSONS_BASE")
+    """Get the system lessons base directory for Claude Recall.
+
+    Checks environment variables in order of precedence:
+    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
+    """
+    base_path = (
+        os.environ.get("CLAUDE_RECALL_BASE") or
+        os.environ.get("RECALL_BASE") or
+        os.environ.get("LESSONS_BASE")
+    )
     if base_path:
         return Path(base_path)
-    return Path.home() / ".config" / "coding-agent-lessons"
+    return Path.home() / ".config" / "claude-recall"
 
 
 def _get_project_data_dir(project_root: Path) -> Path:
-    """Get the project data directory, preferring .recall/ over .coding-agent-lessons/."""
+    """Get the project data directory, preferring .claude-recall/ over legacy paths.
+
+    Checks for directories in order of precedence:
+    .claude-recall/ → .recall/ → .coding-agent-lessons/ → default (.claude-recall/)
+    """
+    claude_recall_dir = project_root / ".claude-recall"
     recall_dir = project_root / ".recall"
     legacy_dir = project_root / ".coding-agent-lessons"
 
-    # Prefer new directory if it exists, otherwise use legacy if it exists
-    if recall_dir.exists():
+    # Prefer new directory if it exists, otherwise check legacy paths
+    if claude_recall_dir.exists():
+        return claude_recall_dir
+    elif recall_dir.exists():
         return recall_dir
     elif legacy_dir.exists():
         return legacy_dir
     else:
         # Default to new directory for new projects
-        return recall_dir
+        return claude_recall_dir
 
 
 class LessonsManager(LessonsMixin, HandoffsMixin):
@@ -60,7 +74,7 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         Initialize the lessons manager.
 
         Args:
-            lessons_base: Base directory for system lessons (~/.config/coding-agent-lessons)
+            lessons_base: Base directory for system lessons (~/.config/claude-recall)
             project_root: Root directory of the project (containing .git)
         """
         self.lessons_base = Path(lessons_base)
@@ -68,7 +82,7 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
 
         self.system_lessons_file = self.lessons_base / "LESSONS.md"
 
-        # Get project data directory (prefers .recall/ over .coding-agent-lessons/)
+        # Get project data directory (prefers .claude-recall/ over legacy paths)
         project_data_dir = _get_project_data_dir(self.project_root)
         self.project_lessons_file = project_data_dir / "LESSONS.md"
 
