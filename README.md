@@ -1,5 +1,7 @@
 # Claude Recall
 
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/prestonbrown/claude-recall)
+
 A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with handoffs tracking.
 
 Works with **Claude Code**, **OpenCode**, and other AI coding tools.
@@ -166,101 +168,60 @@ The system can infer phases from tool usage:
 ```
 ~/.config/claude-recall/
 ├── LESSONS.md                  # System lessons (apply everywhere)
-├── lessons-manager.sh          # Bash CLI (legacy)
+├── cli.py                      # Python CLI (primary)
+├── lessons-manager.sh          # Bash wrapper (calls Python)
 ├── .decay-last-run             # Decay timestamp
 └── .citation-state/            # Per-session checkpoints
 
+~/.local/state/claude-recall/
+└── debug.log                   # Debug logs (XDG state directory)
+
 <project>/.claude-recall/
 ├── LESSONS.md                  # Project-specific lessons
-└── APPROACHES.md               # Active work tracking
+└── HANDOFFS.md                 # Active work tracking (formerly APPROACHES.md)
 ```
 
 ### Core Implementation
 
 ```
 claude-recall/
-├── core/
-│   ├── cli.py                  # Python CLI entry point (primary)
-│   ├── debug_logger.py         # JSON debug logging
-│   └── lessons-manager.sh      # Bash wrapper (calls Python)
-├── adapters/
-│   ├── claude-code/
-│   │   ├── inject-hook.sh      # SessionStart - injects top lessons + approaches
-│   │   ├── smart-inject-hook.sh # UserPromptSubmit - relevance-scored lessons
-│   │   ├── stop-hook.sh        # Stop - tracks citations/patterns
-│   │   ├── session-end-hook.sh # Stop - captures handoff context on session end
-│   │   └── precompact-hook.sh  # PreCompact - captures handoff context before compaction
-│   └── opencode/
-│       └── ...
-└── tests/
-    ├── test_lessons_manager.py # 400+ lesson & handoff tests
-    ├── test_handoffs.py        # Handoff tests
-    └── test_debug_logger.py    # Debug logger tests
+├── core/                       # Python implementation
+│   ├── cli.py                  # CLI entry point
+│   └── ...                     # Manager, models, parsing
+├── adapters/claude-code/       # Hook scripts
+└── tests/                      # 420+ tests
 ```
 
 ## CLI Reference
 
-### Python Manager (Primary)
-
 ```bash
-# Set environment
-export PROJECT_DIR=/path/to/project
-export CLAUDE_RECALL_BASE=~/.config/claude-recall
+# Check version
+python3 core/cli.py --version
 
 # Lessons
-python3 core/lessons_manager.py add pattern "Title" "Content"
-python3 core/lessons_manager.py add-system gotcha "Title" "Content"
-python3 core/lessons_manager.py add-ai pattern "Title" "Content"  # AI-generated
-python3 core/lessons_manager.py cite L001
-python3 core/lessons_manager.py edit L005 "New content"
-python3 core/lessons_manager.py delete L003
-python3 core/lessons_manager.py list [--scope project|system] [--category X]
-python3 core/lessons_manager.py search "keyword"
-python3 core/lessons_manager.py inject 5  # Top 5 by stars for context
-python3 core/lessons_manager.py score-relevance "query" --top 5  # Top 5 by relevance
-python3 core/lessons_manager.py decay 30  # Decay lessons unused 30+ days
+python3 core/cli.py add pattern "Title" "Content"
+python3 core/cli.py add --system pattern "Title" "Content"  # System lesson
+python3 core/cli.py cite L001
+python3 core/cli.py list [--project|--system] [--category X]
+python3 core/cli.py inject 5                    # Top 5 by stars
+python3 core/cli.py score-relevance "query"     # Relevance scoring via Haiku
 
-# Approaches
-python3 core/lessons_manager.py approach add "Title" [--phase X] [--agent Y]
-python3 core/lessons_manager.py approach update A001 --status in_progress
-python3 core/lessons_manager.py approach update A001 --phase implementing
-python3 core/lessons_manager.py approach update A001 --tried fail "Description"
-python3 core/lessons_manager.py approach update A001 --next "Next steps"
-python3 core/lessons_manager.py approach complete A001
-python3 core/lessons_manager.py approach archive A001
-python3 core/lessons_manager.py approach list [--status X]
-python3 core/lessons_manager.py approach inject  # For context
-python3 core/lessons_manager.py approach sync-todos '<json>'  # Sync TodoWrite to approach
-python3 core/lessons_manager.py approach inject-todos  # Format for TodoWrite continuation
+# Handoffs (work tracking)
+python3 core/cli.py handoff add "Title" [--phase X]
+python3 core/cli.py handoff update A001 --status in_progress
+python3 core/cli.py handoff list
+python3 core/cli.py handoff inject              # For context injection
 ```
 
 ## Hook Patterns
 
 The stop-hook recognizes these patterns in assistant output:
 
-### Lesson Patterns
 ```
-LESSON: title - content                    # Add project lesson
-LESSON: category: title - content          # Add with category
-AI LESSON: category: title - content       # AI-proposed lesson
-```
-
-### Approach Patterns
-```
-APPROACH: <title>                              # Start tracking
-PLAN MODE: <title>                             # Start with phase=research, agent=plan
-APPROACH UPDATE A###: status <status>          # in_progress|blocked|completed
-APPROACH UPDATE A###: phase <phase>            # research|planning|implementing|review
-APPROACH UPDATE A###: agent <agent>            # explore|general-purpose|plan|review|user
-APPROACH UPDATE A###: tried <outcome> - <desc> # success|fail|partial
-APPROACH UPDATE A###: next <text>              # Set next steps
-APPROACH COMPLETE A###                         # Mark complete
-```
-
-### Citation Pattern
-```
-[L001]: Applied the lesson...              # Increments uses and velocity
-[S002]: Following system lesson...         # Works for system lessons too
+LESSON: title - content              # Add project lesson
+LESSON: category: title - content    # Add with category
+[L001]: Applied...                   # Citation (increments uses/velocity)
+[S002]: Following...                 # System lesson citation
 ```
 
 ## Configuration
@@ -279,33 +240,13 @@ LESSONS_DEBUG=0|1|2|3                         # Legacy alias
 
 ### Debug Logging
 
-Enable structured JSON logging to analyze system behavior:
+Enable structured JSON logging:
 
 ```bash
-# Enable info-level logging
-export CLAUDE_RECALL_DEBUG=1
-
-# Levels:
-#   0 = disabled (default)
-#   1 = info: session start, citations, lesson adds, decay, approach lifecycle
-#   2 = debug: includes injection details, token calculations
-#   3 = trace: includes file I/O timing, lock waits
+export CLAUDE_RECALL_DEBUG=1   # 0=off, 1=info, 2=debug, 3=trace
 ```
 
-Logs are written to `~/.config/claude-recall/debug.log` in JSON lines format:
-
-```bash
-# View in real-time
-tail -f ~/.config/claude-recall/debug.log | jq .
-
-# Filter by event type
-cat debug.log | jq 'select(.event == "citation")'
-
-# Analyze citation patterns
-cat debug.log | jq -r 'select(.event == "citation") | .lesson_id' | sort | uniq -c
-```
-
-Log files rotate automatically at 50MB (keeps 3 files).
+Logs written to `~/.local/state/claude-recall/debug.log` (XDG state directory).
 
 ### Claude Code Settings
 

@@ -14,6 +14,8 @@ Usage:
     manager.cite_lesson("L001")
 """
 
+from core._version import __version__
+
 # Main class
 from core.manager import LessonsManager
 
@@ -75,6 +77,8 @@ from core.file_lock import FileLock
 from core.cli import main
 
 __all__ = [
+    # Version
+    "__version__",
     # Main class
     "LessonsManager",
     # Constants (new names)

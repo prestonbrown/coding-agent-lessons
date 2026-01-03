@@ -19,9 +19,11 @@ from pathlib import Path
 
 # Handle both module import and direct script execution
 try:
+    from core._version import __version__
     from core.manager import LessonsManager
     from core.models import ROBOT_EMOJI, LessonRating
 except ImportError:
+    from _version import __version__
     from manager import LessonsManager
     from models import ROBOT_EMOJI, LessonRating
 
@@ -46,6 +48,9 @@ def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Claude Recall - AI coding agent memory system"
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"claude-recall {__version__}"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
