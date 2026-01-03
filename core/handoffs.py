@@ -1659,13 +1659,17 @@ Consider extracting lessons about:
                 # Show HandoffContext if present (new structured format)
                 if handoff.handoff is not None:
                     ctx = handoff.handoff
-                    lines.append(f"- **Handoff** ({ctx.git_ref}):")
+                    # Abbreviate git_ref to first 7 characters
+                    abbreviated_ref = ctx.git_ref[:7] if len(ctx.git_ref) > 7 else ctx.git_ref
+                    lines.append(f"- **Handoff** (from {abbreviated_ref}):")
                     lines.append(f"  - Summary: {ctx.summary}")
                     if ctx.critical_files:
                         refs_str = ", ".join(ctx.critical_files[:3])
                         if len(ctx.critical_files) > 3:
                             refs_str += f" (+{len(ctx.critical_files) - 3} more)"
                         lines.append(f"  - Refs: {refs_str}")
+                    if ctx.learnings:
+                        lines.append(f"  - Learnings: {', '.join(ctx.learnings)}")
                     if ctx.blockers:
                         lines.append(f"  - Blockers: {', '.join(ctx.blockers)}")
 

@@ -4528,5 +4528,246 @@ class TestSetContextCLI:
         assert handoff.handoff.git_ref == "abc123"
 
 
+# =============================================================================
+# Phase 7: Injection Format Updates for HandoffContext
+# =============================================================================
+
+
+class TestHandoffContextInjectionFormat:
+    """Tests for updated HandoffContext display in injection output (Phase 7)."""
+
+    def test_inject_shows_abbreviated_git_ref(self, manager: "LessonsManager") -> None:
+        """Injection output shows abbreviated git_ref (first 7 chars)."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Abbreviated ref test")
+
+        context = HandoffContext(
+            summary="Testing abbreviated git ref",
+            critical_files=["core/main.py:50"],
+            recent_changes=["Updated main"],
+            learnings=[],
+            blockers=[],
+            git_ref="abc1234567890abcdef",  # Long git ref
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should show abbreviated ref (first 7 chars)
+        assert "abc1234" in output
+        # Should NOT show the full long ref
+        assert "abc1234567890" not in output
+
+    def test_inject_shows_learnings(self, manager: "LessonsManager") -> None:
+        """Injection output shows learnings from HandoffContext."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Learnings test")
+
+        context = HandoffContext(
+            summary="Making progress",
+            critical_files=[],
+            recent_changes=[],
+            learnings=["_extract_themes() groups by keyword prefix", "Use pipe separators"],
+            blockers=[],
+            git_ref="abc1234",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should show learnings
+        assert "Learnings:" in output
+        assert "_extract_themes()" in output
+
+    def test_inject_omits_empty_learnings(self, manager: "LessonsManager") -> None:
+        """Injection output omits Learnings line when empty."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Empty learnings test")
+
+        context = HandoffContext(
+            summary="No learnings yet",
+            critical_files=["core/main.py:50"],
+            recent_changes=[],
+            learnings=[],  # Empty
+            blockers=[],
+            git_ref="abc1234",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should NOT show Learnings line if empty
+        # But should still show summary and refs
+        assert "No learnings yet" in output
+        assert "core/main.py" in output
+        # No Learnings line
+        assert "Learnings:" not in output
+
+    def test_inject_omits_empty_refs(self, manager: "LessonsManager") -> None:
+        """Injection output omits Refs line when critical_files is empty."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Empty refs test")
+
+        context = HandoffContext(
+            summary="Just summary",
+            critical_files=[],  # Empty
+            recent_changes=[],
+            learnings=["Some learning"],
+            blockers=[],
+            git_ref="abc1234",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should show summary and learnings but not Refs
+        assert "Just summary" in output
+        assert "Some learning" in output
+        # Check that the handoff section doesn't have a "Refs:" subline
+        # Note: There's already "- **Refs**:" for the main handoff refs, so we check the subline
+        lines = output.split("\n")
+        handoff_context_started = False
+        for line in lines:
+            if "**Handoff**" in line and "abc1234" in line:
+                handoff_context_started = True
+            if handoff_context_started and line.strip().startswith("- Refs:"):
+                # This is the context refs line, should not be present for empty
+                pytest.fail("Should not have Refs line in handoff context when critical_files is empty")
+            if handoff_context_started and line.strip().startswith("- Learnings:"):
+                break  # We've passed where Refs would be
+
+    def test_inject_omits_empty_blockers(self, manager: "LessonsManager") -> None:
+        """Injection output omits Blockers line when empty."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Empty blockers test")
+
+        context = HandoffContext(
+            summary="No blockers",
+            critical_files=[],
+            recent_changes=[],
+            learnings=[],
+            blockers=[],  # Empty
+            git_ref="abc1234",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should not have Blockers line in handoff context section
+        lines = output.split("\n")
+        handoff_context_started = False
+        for line in lines:
+            if "**Handoff**" in line and "abc1234" in line:
+                handoff_context_started = True
+                continue
+            if handoff_context_started:
+                # Check we're still in the handoff context section (indented)
+                if line.strip().startswith("- Blockers:"):
+                    pytest.fail("Should not have Blockers line when blockers is empty")
+                # Stop if we hit a non-indented line (new section)
+                if line.strip() and not line.startswith("  "):
+                    break
+
+    def test_inject_legacy_without_handoff_context(self, manager: "LessonsManager") -> None:
+        """Injection output works for handoffs without HandoffContext (legacy mode)."""
+        # Create a handoff without setting handoff context
+        handoff_id = manager.handoff_add(title="Legacy handoff")
+        manager.handoff_update_status(handoff_id, "in_progress")
+        manager.handoff_add_tried(handoff_id, "success", "Did something")
+        manager.handoff_update_next(handoff_id, "Do next thing")
+
+        output = manager.handoff_inject()
+
+        # Should show the handoff info normally
+        assert "Legacy handoff" in output
+        assert "in_progress" in output
+        assert "Next" in output
+        assert "Do next thing" in output
+        # Should NOT have a Handoff context section
+        assert "**Handoff** (" not in output
+
+    def test_inject_critical_files_shown_as_refs(self, manager: "LessonsManager") -> None:
+        """Critical files from HandoffContext are shown with 'Refs' label."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Refs label test")
+
+        context = HandoffContext(
+            summary="Checking refs label",
+            critical_files=["approaches.py:142", "models.py:50"],
+            recent_changes=[],
+            learnings=[],
+            blockers=[],
+            git_ref="def5678",
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        output = manager.handoff_inject()
+
+        # Should show "Refs:" followed by the files
+        assert "Refs: approaches.py:142" in output or "Refs:" in output and "approaches.py" in output
+
+    def test_inject_handoff_context_format_with_all_fields(
+        self, manager: "LessonsManager"
+    ) -> None:
+        """Injection output format matches the target format with all fields."""
+        from core.models import HandoffContext
+
+        handoff_id = manager.handoff_add(title="Context handoff system")
+        manager.handoff_update_status(handoff_id, "in_progress")
+        manager.handoff_update_phase(handoff_id, "implementing")
+
+        # Add some tried steps to test progress display
+        for i in range(12):
+            manager.handoff_add_tried(handoff_id, "success", f"Step {i+1}")
+        manager.handoff_add_tried(handoff_id, "fail", "Failed step")
+
+        context = HandoffContext(
+            summary="Compact injection working, need relevance scoring",
+            critical_files=["approaches.py:142", "models.py:50"],
+            recent_changes=["Updated injection format"],
+            learnings=["_extract_themes() groups by keyword prefix"],
+            blockers=[],
+            git_ref="abc1234def5678",  # Long ref, should be abbreviated
+        )
+
+        manager.handoff_update_context(handoff_id, context)
+        manager.handoff_update_next(handoff_id, "Relevance scoring for approach injection")
+
+        output = manager.handoff_inject()
+
+        # Verify key elements of the target format
+        assert "Context handoff system" in output
+        assert "in_progress" in output
+        assert "implementing" in output
+
+        # Progress should show counts
+        assert "13 steps" in output or "13" in output
+
+        # Handoff context section should be present
+        assert "**Handoff**" in output
+
+        # Abbreviated git ref
+        assert "abc1234" in output
+        assert "abc1234def5678" not in output  # Not the full ref
+
+        # Summary
+        assert "Compact injection working" in output
+
+        # Refs
+        assert "approaches.py:142" in output
+
+        # Learnings
+        assert "_extract_themes()" in output
+
+        # Next steps
+        assert "Relevance scoring" in output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
