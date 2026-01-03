@@ -180,8 +180,9 @@ class HandoffsMixin:
         handoffs = []
         lines = content.split("\n")
 
-        # Pattern for handoff header: ### [A001] Title (still uses A prefix for IDs)
-        header_pattern = re.compile(r"^###\s*\[([A-Z]\d{3})\]\s*(.+)$")
+        # Pattern for handoff header: ### [A001] Title or ### [hf-a1b2c3d] Title
+        # Matches both legacy A### format and new hf-XXXXXXX format
+        header_pattern = re.compile(r"^###\s*\[([A-Z]\d{3}|hf-[0-9a-f]{7})\]\s*(.+)$")
         # New format status line: - **Status**: status | **Phase**: phase | **Agent**: agent
         status_pattern_new = re.compile(
             r"^\s*-\s*\*\*Status\*\*:\s*(\w+)"
@@ -504,8 +505,16 @@ class HandoffsMixin:
         """Backward compatibility alias for _write_handoffs_file."""
         return self._write_handoffs_file(handoffs)
 
+    def _generate_handoff_id(self, title: str) -> str:
+        """Generate hash-based ID like hf-a1b2c3d for multi-agent safety."""
+        import hashlib
+        from datetime import datetime
+        seed = f"{title}:{datetime.now().isoformat()}"
+        hash_hex = hashlib.sha256(seed.encode()).hexdigest()[:7]
+        return f"hf-{hash_hex}"
+
     def _get_next_handoff_id(self) -> str:
-        """Get the next available handoff ID."""
+        """Get the next available handoff ID (legacy sequential format)."""
         max_id = 0
 
         # Check main file
@@ -554,7 +563,7 @@ class HandoffsMixin:
             agent: Agent working on this (explore, general-purpose, plan, review, user)
 
         Returns:
-            The assigned handoff ID (e.g., 'A001')
+            The assigned handoff ID (e.g., 'hf-a1b2c3d')
 
         Raises:
             ValueError: If invalid phase or agent
@@ -568,7 +577,7 @@ class HandoffsMixin:
 
         with FileLock(self.project_handoffs_file):
             handoffs = self._parse_handoffs_file(self.project_handoffs_file)
-            handoff_id = self._get_next_handoff_id()
+            handoff_id = self._generate_handoff_id(title)
             today = date.today()
 
             handoff = Handoff(

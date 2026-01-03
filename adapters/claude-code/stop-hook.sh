@@ -256,8 +256,8 @@ process_approaches() {
                     result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                         python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
                 fi
-                # Extract created ID for LAST reference (e.g., "Added approach A001: ...")
-                if [[ "$result" =~ Added\ approach\ ([A-Z][0-9]{3}) ]]; then
+                # Extract created ID for LAST reference (e.g., "Added approach hf-a1b2c3d: ..." or "Added approach A001: ...")
+                if [[ "$result" =~ Added\ approach\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
                     last_approach_id="${BASH_REMATCH[1]}"
                 fi
             fi
@@ -272,13 +272,13 @@ process_approaches() {
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
                 # Extract created ID for LAST reference
-                if [[ "$result" =~ Added\ approach\ ([A-Z][0-9]{3}) ]]; then
+                if [[ "$result" =~ Added\ approach\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
                     last_approach_id="${BASH_REMATCH[1]}"
                 fi
             fi
 
-        # Pattern 2: APPROACH UPDATE A###|LAST: status <status>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
+        # Pattern 2: APPROACH UPDATE A###|hf-XXXXXXX|LAST: status <status>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue
@@ -290,8 +290,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
             fi
 
-        # Pattern 2b: APPROACH UPDATE A###|LAST: phase <phase>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
+        # Pattern 2b: APPROACH UPDATE A###|hf-XXXXXXX|LAST: phase <phase>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue
@@ -303,8 +303,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --phase "$phase" 2>&1 || true)
             fi
 
-        # Pattern 2c: APPROACH UPDATE A###|LAST: agent <agent>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
+        # Pattern 2c: APPROACH UPDATE A###|hf-XXXXXXX|LAST: agent <agent>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue
@@ -316,8 +316,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
             fi
 
-        # Pattern 2d: APPROACH UPDATE A###|LAST: desc <text>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
+        # Pattern 2d: APPROACH UPDATE A###|hf-XXXXXXX|LAST: desc <text>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue
@@ -329,8 +329,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --desc "$desc_text" 2>&1 || true)
             fi
 
-        # Pattern 3: APPROACH UPDATE A###|LAST: tried <outcome> - <description>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
+        # Pattern 3: APPROACH UPDATE A###|hf-XXXXXXX|LAST: tried <outcome> - <description>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             local outcome="${BASH_REMATCH[2]}"
             local description="${BASH_REMATCH[3]}"
@@ -345,8 +345,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" "$description" 2>&1 || true)
             fi
 
-        # Pattern 4: APPROACH UPDATE A###|LAST: next <text>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
+        # Pattern 4: APPROACH UPDATE A###|hf-XXXXXXX|LAST: next <text>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue
@@ -358,8 +358,8 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
             fi
 
-        # Pattern 5: APPROACH COMPLETE A###|LAST
-        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ ([A-Z][0-9]{3}|LAST)$ ]]; then
+        # Pattern 5: APPROACH COMPLETE A###|hf-XXXXXXX|LAST
+        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
             [[ -z "$approach_id" ]] && continue

@@ -87,21 +87,61 @@ def manager(temp_lessons_base: Path, temp_project_root: Path) -> "LessonsManager
 
 @pytest.fixture
 def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
-    """Create a manager with some pre-existing approaches."""
-    manager.approach_add(
-        title="Implementing WebSocket reconnection",
-        desc="Add automatic reconnection with exponential backoff",
-        files=["src/websocket.ts", "src/connection-manager.ts"],
-    )
-    manager.approach_add(
-        title="Refactoring database layer",
-        desc="Extract repository pattern from service classes",
-        files=["src/db/models.py"],
-    )
-    manager.approach_add(
-        title="Adding unit tests",
-        desc="Improve test coverage for core module",
-    )
+    """Create a manager with some pre-existing approaches using legacy A### IDs.
+
+    This fixture simulates having existing handoffs with the old ID format,
+    which is important for backward compatibility testing. Many tests rely
+    on the specific IDs A001, A002, A003.
+    """
+    # Write legacy format directly to test backward compatibility
+    handoffs_file = manager.project_handoffs_file
+    handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+    today = date.today().isoformat()
+    legacy_content = f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Implementing WebSocket reconnection
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Files**: src/websocket.ts, src/connection-manager.ts
+- **Description**: Add automatic reconnection with exponential backoff
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A002] Refactoring database layer
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Files**: src/db/models.py
+- **Description**: Extract repository pattern from service classes
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A003] Adding unit tests
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Files**:
+- **Description**: Improve test coverage for core module
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+    handoffs_file.write_text(legacy_content)
     return manager
 
 
@@ -123,15 +163,18 @@ class TestApproachAdd:
         content = approaches_file.read_text()
         assert "Test approach" in content
 
-    def test_approach_add_assigns_sequential_id(self, manager: "LessonsManager"):
-        """Approach IDs should be assigned sequentially starting from A001."""
+    def test_approach_add_assigns_hash_id(self, manager: "LessonsManager"):
+        """Approach IDs should be hash-based with hf- prefix."""
         id1 = manager.approach_add(title="First approach")
         id2 = manager.approach_add(title="Second approach")
         id3 = manager.approach_add(title="Third approach")
 
-        assert id1 == "A001"
-        assert id2 == "A002"
-        assert id3 == "A003"
+        # New IDs are hash-based with hf- prefix
+        assert id1.startswith("hf-")
+        assert id2.startswith("hf-")
+        assert id3.startswith("hf-")
+        # IDs should all be unique
+        assert len({id1, id2, id3}) == 3
 
     def test_approach_add_with_description(self, manager: "LessonsManager"):
         """Adding an approach with description should store it."""
@@ -157,8 +200,8 @@ class TestApproachAdd:
 
     def test_approach_add_initializes_metadata(self, manager: "LessonsManager"):
         """New approaches should have correct initial metadata."""
-        manager.approach_add(title="New work")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="New work")
+        approach = manager.approach_get(approach_id)
 
         assert approach is not None
         assert approach.status == "not_started"
@@ -168,10 +211,11 @@ class TestApproachAdd:
         assert approach.next_steps == ""
 
     def test_approach_add_returns_id(self, manager: "LessonsManager"):
-        """Adding an approach should return the assigned ID."""
+        """Adding an approach should return a hash-based ID."""
         result = manager.approach_add(title="Return test")
 
-        assert result == "A001"
+        assert result.startswith("hf-")
+        assert len(result) == 10  # hf- + 7 hex chars
         assert isinstance(result, str)
 
 
@@ -439,14 +483,14 @@ class TestApproachArchive:
 
     def test_approach_archive_creates_archive_if_missing(self, manager: "LessonsManager"):
         """Archiving should create archive file if it doesn't exist."""
-        manager.approach_add(title="To be archived")
+        approach_id = manager.approach_add(title="To be archived")
 
         # Archive file should not exist yet (we check after creating approach since
         # the property path depends on which data dir exists)
         archive_file = manager.project_handoffs_archive
         assert not archive_file.exists()
 
-        manager.approach_archive("A001")
+        manager.approach_archive(approach_id)
 
         # Re-get the path (it might have been created by the archive operation)
         archive_file = manager.project_handoffs_archive
@@ -708,29 +752,31 @@ class TestApproachEdgeCases:
 
     def test_approach_with_special_characters_in_tried(self, manager: "LessonsManager"):
         """Should handle special characters in tried descriptions."""
-        manager.approach_add(title="Test approach")
+        approach_id = manager.approach_add(title="Test approach")
         manager.approach_add_tried(
-            "A001",
+            approach_id,
             outcome="fail",
             description="Used 'quotes' and |pipes| - didn't work",
         )
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert len(approach.tried) == 1
         assert "quotes" in approach.tried[0].description
 
     def test_multiple_approaches(self, manager: "LessonsManager"):
         """Should handle many approaches correctly."""
+        created_ids = []
         for i in range(10):
-            manager.approach_add(title=f"Approach {i+1}")
+            id = manager.approach_add(title=f"Approach {i+1}")
+            created_ids.append(id)
 
         approaches = manager.approach_list()
         assert len(approaches) == 10
 
-        # IDs should be sequential
-        ids = sorted([a.id for a in approaches])
-        expected = [f"A{i:03d}" for i in range(1, 11)]
-        assert ids == expected
+        # All IDs should be hash-based and unique
+        ids = [a.id for a in approaches]
+        assert all(id.startswith("hf-") for id in ids)
+        assert len(set(ids)) == 10  # All unique
 
     def test_approach_empty_file(self, manager: "LessonsManager"):
         """Should handle empty approaches file gracefully."""
@@ -771,15 +817,17 @@ Missing the status line
         assert len(approaches) == 1
         assert approaches[0].id == "A002"
 
-    def test_approach_id_after_deletion(self, manager: "LessonsManager"):
-        """IDs should not be reused after deletion."""
-        manager.approach_add(title="First")
-        manager.approach_add(title="Second")
-        manager.approach_delete("A001")
+    def test_approach_id_uniqueness_with_hash(self, manager: "LessonsManager"):
+        """Hash-based IDs should always be unique regardless of deletion."""
+        id1 = manager.approach_add(title="First")
+        id2 = manager.approach_add(title="Second")
+        manager.approach_delete(id1)
 
-        # New approach should get A003, not A001
+        # New approach should get a unique hash ID
         new_id = manager.approach_add(title="Third")
-        assert new_id == "A003"
+        assert new_id.startswith("hf-")
+        assert new_id != id1  # Should not reuse deleted ID
+        assert new_id != id2  # Should be distinct from existing
 
     def test_approach_with_long_description(self, manager: "LessonsManager"):
         """Should handle long descriptions."""
@@ -802,12 +850,12 @@ Missing the status line
 
     def test_approach_tried_preserves_order(self, manager: "LessonsManager"):
         """Tried approaches should maintain insertion order."""
-        manager.approach_add(title="Order test")
+        approach_id = manager.approach_add(title="Order test")
 
         for i in range(5):
-            manager.approach_add_tried("A001", "fail", f"Attempt {i+1}")
+            manager.approach_add_tried(approach_id, "fail", f"Attempt {i+1}")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         for i, tried in enumerate(approach.tried):
             assert tried.description == f"Attempt {i+1}"
 
@@ -878,8 +926,8 @@ class TestApproachFileFormat:
 
     def test_approach_format_includes_status_line(self, manager: "LessonsManager"):
         """Approach should include status/dates line."""
-        manager.approach_add(title="Test")
-        manager.approach_update_status("A001", "in_progress")
+        approach_id = manager.approach_add(title="Test")
+        manager.approach_update_status(approach_id, "in_progress")
 
         approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
@@ -891,8 +939,8 @@ class TestApproachFileFormat:
 
     def test_approach_format_includes_tried_section(self, manager: "LessonsManager"):
         """Approach should include Tried section."""
-        manager.approach_add(title="Test")
-        manager.approach_add_tried("A001", "fail", "First attempt")
+        approach_id = manager.approach_add(title="Test")
+        manager.approach_add_tried(approach_id, "fail", "First attempt")
 
         approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
@@ -903,8 +951,8 @@ class TestApproachFileFormat:
 
     def test_approach_format_includes_next_section(self, manager: "LessonsManager"):
         """Approach should include Next section."""
-        manager.approach_add(title="Test")
-        manager.approach_update_next("A001", "Do something next")
+        approach_id = manager.approach_add(title="Test")
+        manager.approach_update_next(approach_id, "Do something next")
 
         approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
@@ -923,8 +971,8 @@ class TestApproachPhase:
 
     def test_approach_add_defaults_to_research_phase(self, manager: "LessonsManager"):
         """New approaches should default to 'research' phase."""
-        manager.approach_add(title="Test approach")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="Test approach")
+        approach = manager.approach_get(approach_id)
 
         assert approach is not None
         assert hasattr(approach, "phase")
@@ -932,8 +980,8 @@ class TestApproachPhase:
 
     def test_approach_add_with_explicit_phase(self, manager: "LessonsManager"):
         """Should allow setting phase when adding approach."""
-        manager.approach_add(title="Planning task", phase="planning")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="Planning task", phase="planning")
+        approach = manager.approach_get(approach_id)
 
         assert approach is not None
         assert approach.phase == "planning"
@@ -1004,8 +1052,8 @@ class TestApproachAgent:
 
     def test_approach_add_defaults_to_user_agent(self, manager: "LessonsManager"):
         """New approaches should default to 'user' agent (no subagent)."""
-        manager.approach_add(title="Test approach")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="Test approach")
+        approach = manager.approach_get(approach_id)
 
         assert approach is not None
         assert hasattr(approach, "agent")
@@ -1013,8 +1061,8 @@ class TestApproachAgent:
 
     def test_approach_add_with_explicit_agent(self, manager: "LessonsManager"):
         """Should allow setting agent when adding approach."""
-        manager.approach_add(title="Exploration task", agent="explore")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="Exploration task", agent="explore")
+        approach = manager.approach_get(approach_id)
 
         assert approach is not None
         assert approach.agent == "explore"
@@ -1144,8 +1192,8 @@ class TestApproachPhaseAgentFormat:
 
     def test_approach_format_phase_agent_on_status_line(self, manager: "LessonsManager"):
         """Phase and agent should be on the status line after status."""
-        manager.approach_add(title="Test format", phase="planning", agent="plan")
-        manager.approach_update_status("A001", "in_progress")
+        approach_id = manager.approach_add(title="Test format", phase="planning", agent="plan")
+        manager.approach_update_status(approach_id, "in_progress")
 
         approaches_file = manager.project_handoffs_file
         content = approaches_file.read_text()
@@ -1322,9 +1370,11 @@ class TestApproachDecayVisibility:
     ):
         """With all old approaches, max_count limits the result."""
         # Create and complete 5 approaches with old dates
+        created_ids = []
         for i in range(5):
-            manager.approach_add(title=f"Approach {i}")
-            manager.approach_update_status(f"A00{i+1}", "completed")
+            approach_id = manager.approach_add(title=f"Approach {i}")
+            created_ids.append(approach_id)
+            manager.approach_update_status(approach_id, "completed")
 
         # Make them all old (30 days ago) so only max_count applies
         approaches_file = manager.project_handoffs_file
@@ -1345,8 +1395,8 @@ class TestApproachDecayVisibility:
         self, manager: "LessonsManager"
     ):
         """Should filter out approaches older than max_age_days."""
-        manager.approach_add(title="Recent approach")
-        manager.approach_update_status("A001", "completed")
+        approach_id = manager.approach_add(title="Recent approach")
+        manager.approach_update_status(approach_id, "completed")
 
         # Should include recent
         completed = manager.approach_list_completed(max_age_days=7)
@@ -1357,9 +1407,11 @@ class TestApproachDecayVisibility:
     ):
         """Should use OR logic: within max_count OR within max_age_days."""
         # Create 5 completed approaches
+        created_ids = []
         for i in range(5):
-            manager.approach_add(title=f"Approach {i}")
-            manager.approach_update_status(f"A00{i+1}", "completed")
+            approach_id = manager.approach_add(title=f"Approach {i}")
+            created_ids.append(approach_id)
+            manager.approach_update_status(approach_id, "completed")
 
         # Hybrid: max 2 OR within 7 days
         # All are recent, so should get max 2 (the most recent)
@@ -1376,15 +1428,15 @@ class TestApproachInjectWithCompleted:
         self, manager: "LessonsManager"
     ):
         """Injection should show recent completions section."""
-        manager.approach_add(title="Active task")
-        manager.approach_add(title="Completed task")
-        manager.approach_update_status("A002", "completed")
+        id1 = manager.approach_add(title="Active task")
+        id2 = manager.approach_add(title="Completed task")
+        manager.approach_update_status(id2, "completed")
 
         output = manager.approach_inject()
 
         # Should show both active and completed sections
         assert "Active" in output or "active" in output
-        assert "A001" in output
+        assert id1 in output
         # Should mention completed or recent
         assert "Completed" in output or "completed" in output or "Recent" in output
 
@@ -1392,8 +1444,8 @@ class TestApproachInjectWithCompleted:
         self, manager: "LessonsManager"
     ):
         """Completed approaches should show completion metadata."""
-        manager.approach_add(title="Finished feature")
-        manager.approach_update_status("A001", "completed")
+        approach_id = manager.approach_add(title="Finished feature")
+        manager.approach_update_status(approach_id, "completed")
 
         output = manager.approach_inject()
 
@@ -1405,9 +1457,11 @@ class TestApproachInjectWithCompleted:
     ):
         """Old completed approaches outside top N should not appear."""
         # Create 5 completed approaches
+        created_ids = []
         for i in range(5):
-            manager.approach_add(title=f"Task {i}")
-            manager.approach_update_status(f"A00{i+1}", "completed")
+            approach_id = manager.approach_add(title=f"Task {i}")
+            created_ids.append(approach_id)
+            manager.approach_update_status(approach_id, "completed")
 
         # Make them all old (30 days ago)
         approaches_file = manager.project_handoffs_file
@@ -1435,10 +1489,10 @@ class TestApproachAutoArchive:
         self, manager: "LessonsManager"
     ):
         """Complete should track if lessons were extracted."""
-        manager.approach_add(title="Feature work")
-        manager.approach_add_tried("A001", "success", "Main implementation")
+        approach_id = manager.approach_add(title="Feature work")
+        manager.approach_add_tried(approach_id, "success", "Main implementation")
 
-        result = manager.approach_complete("A001")
+        result = manager.approach_complete(approach_id)
 
         # Should return extraction prompt
         assert result.extraction_prompt is not None
@@ -1448,11 +1502,11 @@ class TestApproachAutoArchive:
         self, manager: "LessonsManager"
     ):
         """Should be able to archive after completing."""
-        manager.approach_add(title="Feature work")
-        manager.approach_complete("A001")
+        approach_id = manager.approach_add(title="Feature work")
+        manager.approach_complete(approach_id)
 
         # Archive after extraction
-        manager.approach_archive("A001")
+        manager.approach_archive(approach_id)
 
         # Should no longer appear in active list
         approaches = manager.approach_list()
@@ -1514,20 +1568,20 @@ class TestPlanModeApproachCreation:
         self, manager: "LessonsManager"
     ):
         """Phase should transition from research to planning."""
-        manager.approach_add(title="New feature", phase="research")
-        manager.approach_update_phase("A001", "planning")
+        approach_id = manager.approach_add(title="New feature", phase="research")
+        manager.approach_update_phase(approach_id, "planning")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "planning"
 
     def test_approach_phase_transition_planning_to_implementing(
         self, manager: "LessonsManager"
     ):
         """Phase should transition from planning to implementing."""
-        manager.approach_add(title="New feature", phase="planning")
-        manager.approach_update_phase("A001", "implementing")
+        approach_id = manager.approach_add(title="New feature", phase="planning")
+        manager.approach_update_phase(approach_id, "implementing")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
 
@@ -1536,12 +1590,12 @@ class TestHookPhasePatterns:
 
     def test_approach_update_phase_via_hook_pattern(self, manager: "LessonsManager"):
         """Should support phase updates from hook patterns."""
-        manager.approach_add(title="Test feature")
+        approach_id = manager.approach_add(title="Test feature")
 
         # This simulates what the hook would do
-        manager.approach_update_phase("A001", "implementing")
+        manager.approach_update_phase(approach_id, "implementing")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_phase_update_preserves_other_fields(
@@ -1568,7 +1622,7 @@ class TestHookPhasePatterns:
             phase="research",
         )
 
-        assert approach_id == "A001"
+        assert approach_id.startswith("hf-")
         approach = manager.approach_get(approach_id)
         assert approach.title == "Feature from plan mode"
 
@@ -1603,7 +1657,8 @@ class TestHookCLIIntegration:
         )
 
         assert result.returncode == 0
-        assert "A001" in result.stdout
+        # Hash-based IDs start with "hf-"
+        assert "hf-" in result.stdout
 
     def test_cli_approach_start_alias(self, tmp_path):
         """CLI should support 'start' as alias for 'add'."""
@@ -1627,7 +1682,8 @@ class TestHookCLIIntegration:
         )
 
         assert result.returncode == 0
-        assert "A001" in result.stdout
+        # Hash-based IDs start with "hf-"
+        assert "hf-" in result.stdout
         assert "Test Start Alias" in result.stdout
 
     def test_cli_approach_update_phase(self, tmp_path):
@@ -1636,13 +1692,17 @@ class TestHookCLIIntegration:
         env["PROJECT_DIR"] = str(tmp_path)
         env["LESSONS_BASE"] = str(tmp_path / ".lessons")
 
-        # First create an approach
-        subprocess.run(
+        # First create an approach and capture the ID
+        add_result = subprocess.run(
             [sys.executable, "core/cli.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
         )
+        # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
+        import re
+        id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
+        approach_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Then update the phase
         result = subprocess.run(
@@ -1651,7 +1711,7 @@ class TestHookCLIIntegration:
                 "core/cli.py",
                 "approach",
                 "update",
-                "A001",
+                approach_id,
                 "--phase",
                 "implementing",
             ],
@@ -1669,13 +1729,17 @@ class TestHookCLIIntegration:
         env["PROJECT_DIR"] = str(tmp_path)
         env["LESSONS_BASE"] = str(tmp_path / ".lessons")
 
-        # First create an approach
-        subprocess.run(
+        # First create an approach and capture the ID
+        add_result = subprocess.run(
             [sys.executable, "core/cli.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
         )
+        # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
+        import re
+        id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
+        approach_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Then update the agent
         result = subprocess.run(
@@ -1684,7 +1748,7 @@ class TestHookCLIIntegration:
                 "core/cli.py",
                 "approach",
                 "update",
-                "A001",
+                approach_id,
                 "--agent",
                 "general-purpose",
             ],
@@ -1766,8 +1830,10 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approach = manager.approach_get("A001")
-        assert approach is not None
+        approaches = manager.approach_list()
+        assert len(approaches) == 1
+        approach = approaches[0]
+        assert approach.title == "Test feature"
         assert approach.phase == "implementing"
 
     def test_last_reference_tried_update(self, temp_dirs):
@@ -1804,8 +1870,10 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approach = manager.approach_get("A001")
-        assert approach is not None
+        approaches = manager.approach_list()
+        assert len(approaches) == 1
+        approach = approaches[0]
+        assert approach.title == "Another feature"
         assert len(approach.tried) == 1
         assert approach.tried[0].outcome == "success"
         assert "worked great" in approach.tried[0].description
@@ -1844,8 +1912,11 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
-        approach = manager.approach_get("A001")
-        assert approach is not None
+        # Completed approaches are not in the default list
+        completed = manager.approach_list_completed()
+        assert len(completed) == 1
+        approach = completed[0]
+        assert approach.title == "Complete me"
         assert approach.status == "completed"
 
     def test_last_tracks_across_multiple_creates(self, temp_dirs):
@@ -1883,16 +1954,18 @@ class TestStopHookLastReference:
 
         from core import LessonsManager
         manager = LessonsManager(lessons_base, project_root)
+        approaches = manager.approach_list()
+        assert len(approaches) == 2
 
-        # A001 (First) should still be research (not updated)
-        a001 = manager.approach_get("A001")
-        assert a001 is not None
-        assert a001.phase == "research"
+        # Find approaches by title
+        first = next((a for a in approaches if a.title == "First approach"), None)
+        second = next((a for a in approaches if a.title == "Second approach"), None)
 
-        # A002 (Second) should be implementing (LAST referred to it)
-        a002 = manager.approach_get("A002")
-        assert a002 is not None
-        assert a002.phase == "implementing"
+        assert first is not None
+        assert first.phase == "research"  # Not updated
+
+        assert second is not None
+        assert second.phase == "implementing"  # LAST referred to it
 
 
 # =============================================================================
@@ -2056,6 +2129,7 @@ class TestApproachCheckpointCLI:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test updating checkpoint via CLI."""
+        import re
         lessons_base = tmp_path / "lessons_base"
         project_root = tmp_path / "project"
         lessons_base.mkdir()
@@ -2067,8 +2141,8 @@ class TestApproachCheckpointCLI:
         monkeypatch.setenv("LESSONS_BASE", str(lessons_base))
         monkeypatch.setenv("PROJECT_DIR", str(project_root))
 
-        # Add approach
-        result = subprocess.run(
+        # Add approach and capture the ID
+        add_result = subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -2081,7 +2155,11 @@ class TestApproachCheckpointCLI:
             text=True,
             cwd=str(repo_root),
         )
-        assert result.returncode == 0, result.stderr
+        assert add_result.returncode == 0, add_result.stderr
+
+        # Parse the ID from output (format: "Added approach hf-XXXXXXX: Test")
+        id_match = re.search(r'(hf-[0-9a-f]{7})', add_result.stdout)
+        approach_id = id_match.group(1) if id_match else "hf-unknown"
 
         # Update checkpoint
         result = subprocess.run(
@@ -2091,7 +2169,7 @@ class TestApproachCheckpointCLI:
                 "core.cli",
                 "approach",
                 "update",
-                "A001",
+                approach_id,
                 "--checkpoint",
                 "Progress: tests passing",
             ],
@@ -2100,13 +2178,13 @@ class TestApproachCheckpointCLI:
             cwd=str(repo_root),
         )
         assert result.returncode == 0, result.stderr
-        assert "Updated A001 checkpoint" in result.stdout
+        assert f"Updated {approach_id} checkpoint" in result.stdout
 
         # Verify via manager directly
         from core import LessonsManager
 
         manager = LessonsManager(lessons_base, project_root)
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.checkpoint == "Progress: tests passing"
 
 
@@ -2299,7 +2377,7 @@ class TestApproachInjectTodos:
 
         # JSON should only have current task, not done task
         assert len(todos) == 1
-        assert "[A001] Current task" in todos[0]["content"]
+        assert f"[{approach_id}] Current task" in todos[0]["content"]
         assert todos[0]["status"] == "in_progress"
 
 
@@ -2438,8 +2516,8 @@ class TestCompletedApproachArchival:
         """Completed approaches are archived after APPROACH_COMPLETED_ARCHIVE_DAYS."""
         from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
 
-        manager.approach_add(title="Finished work")
-        manager.approach_complete("A001")
+        approach_id = manager.approach_add(title="Finished work")
+        manager.approach_complete(approach_id)
 
         # Backdate the completed approach
         approaches = manager._parse_approaches_file(manager.project_approaches_file)
@@ -2461,8 +2539,8 @@ class TestCompletedApproachArchival:
         """Completed approaches exactly at threshold are NOT archived."""
         from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
 
-        manager.approach_add(title="Just finished")
-        manager.approach_complete("A001")
+        approach_id = manager.approach_add(title="Just finished")
+        manager.approach_complete(approach_id)
 
         # Set to exactly at threshold
         approaches = manager._parse_approaches_file(manager.project_approaches_file)
@@ -2478,8 +2556,8 @@ class TestCompletedApproachArchival:
 
     def test_fresh_completed_not_archived(self, manager: LessonsManager) -> None:
         """Recently completed approaches stay in active for visibility."""
-        manager.approach_add(title="Just done")
-        manager.approach_complete("A001")
+        approach_id = manager.approach_add(title="Just done")
+        manager.approach_complete(approach_id)
 
         archived = manager._archive_old_completed_approaches()
 
@@ -2493,10 +2571,10 @@ class TestCompletedApproachArchival:
         from core.models import APPROACH_STALE_DAYS, APPROACH_COMPLETED_ARCHIVE_DAYS
 
         # Create stale active approach
-        manager.approach_add(title="Stale active")
+        id1 = manager.approach_add(title="Stale active")
         # Create old completed approach
-        manager.approach_add(title="Old completed")
-        manager.approach_complete("A002")
+        id2 = manager.approach_add(title="Old completed")
+        manager.approach_complete(id2)
 
         approaches = manager._parse_approaches_file(manager.project_approaches_file)
         approaches[0].updated = date.today() - timedelta(days=APPROACH_STALE_DAYS + 1)
@@ -2518,25 +2596,25 @@ class TestCompletedApproachArchival:
         """_archive_old_completed_approaches returns list of archived IDs."""
         from core.models import APPROACH_COMPLETED_ARCHIVE_DAYS
 
-        manager.approach_add(title="Old 1")
-        manager.approach_add(title="Old 2")
-        manager.approach_add(title="Fresh")
-        manager.approach_complete("A001")
-        manager.approach_complete("A002")
-        manager.approach_complete("A003")
+        id1 = manager.approach_add(title="Old 1")
+        id2 = manager.approach_add(title="Old 2")
+        id3 = manager.approach_add(title="Fresh")
+        manager.approach_complete(id1)
+        manager.approach_complete(id2)
+        manager.approach_complete(id3)
 
         approaches = manager._parse_approaches_file(manager.project_approaches_file)
         approaches[0].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 2)
         approaches[1].updated = date.today() - timedelta(days=APPROACH_COMPLETED_ARCHIVE_DAYS + 1)
-        # A003 stays fresh
+        # id3 stays fresh
         manager._write_approaches_file(approaches)
 
         archived = manager._archive_old_completed_approaches()
 
         assert len(archived) == 2
-        assert "A001" in archived
-        assert "A002" in archived
-        assert "A003" not in archived
+        assert id1 in archived
+        assert id2 in archived
+        assert id3 not in archived
 
 
 class TestAutoCompleteOnFinalPattern:
@@ -2544,93 +2622,93 @@ class TestAutoCompleteOnFinalPattern:
 
     def test_tried_with_final_commit_autocompletes(self, manager: LessonsManager) -> None:
         """Adding tried step with 'Final report and commit' marks approach complete."""
-        manager.approach_add(title="Feature work")
+        approach_id = manager.approach_add(title="Feature work")
 
-        manager.approach_add_tried("A001", "success", "Final report and commit")
+        manager.approach_add_tried(approach_id, "success", "Final report and commit")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_tried_with_final_review_autocompletes(self, manager: LessonsManager) -> None:
         """Adding tried step with 'Final review' marks approach complete."""
-        manager.approach_add(title="Bug fix")
+        approach_id = manager.approach_add(title="Bug fix")
 
-        manager.approach_add_tried("A001", "success", "Final review and merge")
+        manager.approach_add_tried(approach_id, "success", "Final review and merge")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_final_pattern_case_insensitive(self, manager: LessonsManager) -> None:
         """Final pattern matching is case insensitive."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "success", "FINAL COMMIT")
+        manager.approach_add_tried(approach_id, "success", "FINAL COMMIT")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_final_pattern_requires_success(self, manager: LessonsManager) -> None:
         """Only successful 'final' steps trigger auto-complete."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "fail", "Final commit failed")
+        manager.approach_add_tried(approach_id, "fail", "Final commit failed")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status != "completed"
 
     def test_final_pattern_partial_does_not_complete(self, manager: LessonsManager) -> None:
         """Partial outcome with 'final' does not trigger auto-complete."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "partial", "Final steps started")
+        manager.approach_add_tried(approach_id, "partial", "Final steps started")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status != "completed"
 
     def test_word_final_in_middle_does_not_trigger(self, manager: LessonsManager) -> None:
         """'Final' must be at start of description to trigger."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "success", "Updated the final configuration")
+        manager.approach_add_tried(approach_id, "success", "Updated the final configuration")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status != "completed"
 
     def test_done_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Done' at start also triggers auto-complete."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "success", "Done - all tests passing")
+        manager.approach_add_tried(approach_id, "success", "Done - all tests passing")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_complete_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Complete' at start also triggers auto-complete."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "success", "Complete implementation merged")
+        manager.approach_add_tried(approach_id, "success", "Complete implementation merged")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_finished_pattern_autocompletes(self, manager: LessonsManager) -> None:
         """'Finished' at start also triggers auto-complete."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
 
-        manager.approach_add_tried("A001", "success", "Finished all tasks")
+        manager.approach_add_tried(approach_id, "success", "Finished all tasks")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
 
     def test_autocomplete_sets_phase_to_review(self, manager: LessonsManager) -> None:
         """Auto-completed approaches get phase set to 'review'."""
-        manager.approach_add(title="Task")
-        manager.approach_update_phase("A001", "implementing")
+        approach_id = manager.approach_add(title="Task")
+        manager.approach_update_phase(approach_id, "implementing")
 
-        manager.approach_add_tried("A001", "success", "Final commit")
+        manager.approach_add_tried(approach_id, "success", "Final commit")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.status == "completed"
         assert approach.phase == "review"
 
@@ -2640,127 +2718,127 @@ class TestAutoPhaseUpdate:
 
     def test_implement_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'implement' bumps phase to implementing."""
-        manager.approach_add(title="Feature")
-        approach = manager.approach_get("A001")
+        approach_id = manager.approach_add(title="Feature")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "research"  # Default
 
-        manager.approach_add_tried("A001", "success", "Implement the core logic")
+        manager.approach_add_tried(approach_id, "success", "Implement the core logic")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_build_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'build' bumps phase to implementing."""
-        manager.approach_add(title="Feature")
+        approach_id = manager.approach_add(title="Feature")
 
-        manager.approach_add_tried("A001", "success", "Build the component")
+        manager.approach_add_tried(approach_id, "success", "Build the component")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_create_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'create' bumps phase to implementing."""
-        manager.approach_add(title="Feature")
+        approach_id = manager.approach_add(title="Feature")
 
-        manager.approach_add_tried("A001", "success", "Create new module")
+        manager.approach_add_tried(approach_id, "success", "Create new module")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_add_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Add' bumps phase to implementing."""
-        manager.approach_add(title="Feature")
+        approach_id = manager.approach_add(title="Feature")
 
-        manager.approach_add_tried("A001", "success", "Add error handling")
+        manager.approach_add_tried(approach_id, "success", "Add error handling")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_fix_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Fix' bumps phase to implementing."""
-        manager.approach_add(title="Bug")
+        approach_id = manager.approach_add(title="Bug")
 
-        manager.approach_add_tried("A001", "success", "Fix the null pointer issue")
+        manager.approach_add_tried(approach_id, "success", "Fix the null pointer issue")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_many_success_steps_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """10+ successful tried steps bumps phase to implementing."""
-        manager.approach_add(title="Big task")
+        approach_id = manager.approach_add(title="Big task")
 
         # Add 10 generic success steps
         for i in range(10):
-            manager.approach_add_tried("A001", "success", f"Step {i + 1}")
+            manager.approach_add_tried(approach_id, "success", f"Step {i + 1}")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_nine_steps_stays_in_research(self, manager: LessonsManager) -> None:
         """9 successful steps without implementing keywords stays in research."""
-        manager.approach_add(title="Research task")
+        approach_id = manager.approach_add(title="Research task")
 
         for i in range(9):
-            manager.approach_add_tried("A001", "success", f"Research step {i + 1}")
+            manager.approach_add_tried(approach_id, "success", f"Research step {i + 1}")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "research"
 
     def test_phase_not_downgraded(self, manager: LessonsManager) -> None:
         """If already in implementing, phase is not changed."""
-        manager.approach_add(title="Feature")
-        manager.approach_update_phase("A001", "implementing")
+        approach_id = manager.approach_add(title="Feature")
+        manager.approach_update_phase(approach_id, "implementing")
 
-        manager.approach_add_tried("A001", "success", "Research more options")
+        manager.approach_add_tried(approach_id, "success", "Research more options")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_review_phase_not_changed(self, manager: LessonsManager) -> None:
         """If in review phase, auto-update doesn't change it."""
-        manager.approach_add(title="Feature")
-        manager.approach_update_phase("A001", "review")
+        approach_id = manager.approach_add(title="Feature")
+        manager.approach_update_phase(approach_id, "review")
 
-        manager.approach_add_tried("A001", "success", "Implement one more thing")
+        manager.approach_add_tried(approach_id, "success", "Implement one more thing")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "review"
 
     def test_planning_phase_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Planning phase can be bumped to implementing."""
-        manager.approach_add(title="Feature")
-        manager.approach_update_phase("A001", "planning")
+        approach_id = manager.approach_add(title="Feature")
+        manager.approach_update_phase(approach_id, "planning")
 
-        manager.approach_add_tried("A001", "success", "Implement the API")
+        manager.approach_add_tried(approach_id, "success", "Implement the API")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_write_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Write' bumps phase to implementing."""
-        manager.approach_add(title="Docs")
+        approach_id = manager.approach_add(title="Docs")
 
-        manager.approach_add_tried("A001", "success", "Write the documentation")
+        manager.approach_add_tried(approach_id, "success", "Write the documentation")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_update_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step starting with 'Update' bumps phase to implementing."""
-        manager.approach_add(title="Refactor")
+        approach_id = manager.approach_add(title="Refactor")
 
-        manager.approach_add_tried("A001", "success", "Update the interface")
+        manager.approach_add_tried(approach_id, "success", "Update the interface")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
     def test_failed_implement_step_still_bumps(self, manager: LessonsManager) -> None:
         """Failed implementing step still bumps phase (attempted impl)."""
-        manager.approach_add(title="Feature")
+        approach_id = manager.approach_add(title="Feature")
 
-        manager.approach_add_tried("A001", "fail", "Implement the feature - build errors")
+        manager.approach_add_tried(approach_id, "fail", "Implement the feature - build errors")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         assert approach.phase == "implementing"
 
 
@@ -2769,71 +2847,71 @@ class TestExtractThemes:
 
     def test_extract_themes_guard_keywords(self, manager: LessonsManager) -> None:
         """Steps with guard/destructor keywords are categorized as 'guard'."""
-        manager.approach_add(title="Cleanup")
-        manager.approach_add_tried("A001", "success", "Add is_destroyed guard")
-        manager.approach_add_tried("A001", "success", "Fix destructor order")
-        manager.approach_add_tried("A001", "success", "Cleanup resources")
+        approach_id = manager.approach_add(title="Cleanup")
+        manager.approach_add_tried(approach_id, "success", "Add is_destroyed guard")
+        manager.approach_add_tried(approach_id, "success", "Fix destructor order")
+        manager.approach_add_tried(approach_id, "success", "Cleanup resources")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("guard", 0) == 3
 
     def test_extract_themes_plugin_keywords(self, manager: LessonsManager) -> None:
         """Steps with plugin/phase keywords are categorized as 'plugin'."""
-        manager.approach_add(title="Plugin work")
-        manager.approach_add_tried("A001", "success", "Phase 3: Plan plugin structure")
-        manager.approach_add_tried("A001", "success", "Implement LED plugin")
+        approach_id = manager.approach_add(title="Plugin work")
+        manager.approach_add_tried(approach_id, "success", "Phase 3: Plan plugin structure")
+        manager.approach_add_tried(approach_id, "success", "Implement LED plugin")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("plugin", 0) == 2
 
     def test_extract_themes_ui_keywords(self, manager: LessonsManager) -> None:
         """Steps with xml/button/modal keywords are categorized as 'ui'."""
-        manager.approach_add(title="UI work")
-        manager.approach_add_tried("A001", "success", "Add XML button")
-        manager.approach_add_tried("A001", "success", "Create modal dialog")
-        manager.approach_add_tried("A001", "success", "Update panel layout")
+        approach_id = manager.approach_add(title="UI work")
+        manager.approach_add_tried(approach_id, "success", "Add XML button")
+        manager.approach_add_tried(approach_id, "success", "Create modal dialog")
+        manager.approach_add_tried(approach_id, "success", "Update panel layout")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("ui", 0) == 3
 
     def test_extract_themes_fix_keywords(self, manager: LessonsManager) -> None:
         """Steps with fix/bug/error keywords are categorized as 'fix'."""
-        manager.approach_add(title="Bug fixes")
-        manager.approach_add_tried("A001", "success", "Fix HIGH: null pointer")
-        manager.approach_add_tried("A001", "success", "Bug in error handling")
-        manager.approach_add_tried("A001", "success", "Handle issue #123")
+        approach_id = manager.approach_add(title="Bug fixes")
+        manager.approach_add_tried(approach_id, "success", "Fix HIGH: null pointer")
+        manager.approach_add_tried(approach_id, "success", "Bug in error handling")
+        manager.approach_add_tried(approach_id, "success", "Handle issue #123")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("fix", 0) == 3
 
     def test_extract_themes_other_fallback(self, manager: LessonsManager) -> None:
         """Unrecognized steps fall into 'other' category."""
-        manager.approach_add(title="Misc")
-        manager.approach_add_tried("A001", "success", "Research the approach")
-        manager.approach_add_tried("A001", "success", "Document findings")
+        approach_id = manager.approach_add(title="Misc")
+        manager.approach_add_tried(approach_id, "success", "Research the approach")
+        manager.approach_add_tried(approach_id, "success", "Document findings")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("other", 0) == 2
 
     def test_extract_themes_mixed(self, manager: LessonsManager) -> None:
         """Mixed steps are categorized correctly (first matching theme wins)."""
-        manager.approach_add(title="Mixed work")
-        manager.approach_add_tried("A001", "success", "Add is_destroyed guard")
-        manager.approach_add_tried("A001", "success", "Fix the null error")  # pure fix
-        manager.approach_add_tried("A001", "success", "Plugin phase 2")
-        manager.approach_add_tried("A001", "success", "Random task")
+        approach_id = manager.approach_add(title="Mixed work")
+        manager.approach_add_tried(approach_id, "success", "Add is_destroyed guard")
+        manager.approach_add_tried(approach_id, "success", "Fix the null error")  # pure fix
+        manager.approach_add_tried(approach_id, "success", "Plugin phase 2")
+        manager.approach_add_tried(approach_id, "success", "Random task")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         themes = manager._extract_themes(approach.tried)
 
         assert themes.get("guard", 0) == 1
@@ -2857,11 +2935,11 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_shows_progress_count(self, manager: LessonsManager) -> None:
         """Summary includes step count."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
         for i in range(5):
-            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2869,11 +2947,11 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_all_success(self, manager: LessonsManager) -> None:
         """All success steps show '(all success)'."""
-        manager.approach_add(title="Task")
-        manager.approach_add_tried("A001", "success", "Step 1")
-        manager.approach_add_tried("A001", "success", "Step 2")
+        approach_id = manager.approach_add(title="Task")
+        manager.approach_add_tried(approach_id, "success", "Step 1")
+        manager.approach_add_tried(approach_id, "success", "Step 2")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2881,12 +2959,12 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_mixed_outcomes(self, manager: LessonsManager) -> None:
         """Mixed outcomes show success/fail counts."""
-        manager.approach_add(title="Task")
-        manager.approach_add_tried("A001", "success", "Step 1")
-        manager.approach_add_tried("A001", "fail", "Step 2 failed")
-        manager.approach_add_tried("A001", "success", "Step 3")
+        approach_id = manager.approach_add(title="Task")
+        manager.approach_add_tried(approach_id, "success", "Step 1")
+        manager.approach_add_tried(approach_id, "fail", "Step 2 failed")
+        manager.approach_add_tried(approach_id, "success", "Step 3")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2894,11 +2972,11 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_shows_last_3_steps(self, manager: LessonsManager) -> None:
         """Summary shows last 3 steps."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
         for i in range(10):
-            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2909,11 +2987,11 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_truncates_long_descriptions(self, manager: LessonsManager) -> None:
         """Long step descriptions are truncated."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
         long_desc = "A" * 100  # 100 chars
-        manager.approach_add_tried("A001", "success", long_desc)
+        manager.approach_add_tried(approach_id, "success", long_desc)
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2922,16 +3000,16 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_shows_themes_for_earlier(self, manager: LessonsManager) -> None:
         """Earlier steps (before last 3) show theme summary."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
         # Add 5 guard-related steps
         for i in range(5):
-            manager.approach_add_tried("A001", "success", f"Add is_destroyed guard {i+1}")
+            manager.approach_add_tried(approach_id, "success", f"Add is_destroyed guard {i+1}")
         # Add 3 more steps (will be the "recent" ones)
-        manager.approach_add_tried("A001", "success", "Recent 1")
-        manager.approach_add_tried("A001", "success", "Recent 2")
-        manager.approach_add_tried("A001", "success", "Recent 3")
+        manager.approach_add_tried(approach_id, "success", "Recent 1")
+        manager.approach_add_tried(approach_id, "success", "Recent 2")
+        manager.approach_add_tried(approach_id, "success", "Recent 3")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2940,11 +3018,11 @@ class TestSummarizeTriedSteps:
 
     def test_summarize_no_themes_for_few_steps(self, manager: LessonsManager) -> None:
         """No theme summary when 3 or fewer steps."""
-        manager.approach_add(title="Task")
-        manager.approach_add_tried("A001", "success", "Step 1")
-        manager.approach_add_tried("A001", "success", "Step 2")
+        approach_id = manager.approach_add(title="Task")
+        manager.approach_add_tried(approach_id, "success", "Step 1")
+        manager.approach_add_tried(approach_id, "success", "Step 2")
 
-        approach = manager.approach_get("A001")
+        approach = manager.approach_get(approach_id)
         result = manager._summarize_tried_steps(approach.tried)
         result_str = "\n".join(result)
 
@@ -2964,9 +3042,9 @@ class TestApproachInjectCompact:
 
     def test_inject_compact_progress_not_full_list(self, manager: LessonsManager) -> None:
         """Injection shows progress summary, not full tried list."""
-        manager.approach_add(title="Task")
+        approach_id = manager.approach_add(title="Task")
         for i in range(20):
-            manager.approach_add_tried("A001", "success", f"Step {i+1}")
+            manager.approach_add_tried(approach_id, "success", f"Step {i+1}")
 
         result = manager.approach_inject()
 
@@ -2978,22 +3056,22 @@ class TestApproachInjectCompact:
 
     def test_inject_shows_appears_done_warning(self, manager: LessonsManager) -> None:
         """Warning shown when last step looks like completion."""
-        manager.approach_add(title="Task")
-        manager.approach_add_tried("A001", "success", "Research")
-        manager.approach_add_tried("A001", "success", "Implement")
+        approach_id = manager.approach_add(title="Task")
+        manager.approach_add_tried(approach_id, "success", "Research")
+        manager.approach_add_tried(approach_id, "success", "Implement")
         # Don't use "Final" as it will auto-complete now
         # Instead test with an approach that was manually kept open
 
         # For this test, we need to add a "final-looking" step without triggering auto-complete
         # Let's test with a step that says "commit" at the end, not start
-        manager.approach_add(title="Task 2")
-        manager.approach_add_tried("A002", "success", "All done and ready for commit")
+        approach_id2 = manager.approach_add(title="Task 2")
+        manager.approach_add_tried(approach_id2, "success", "All done and ready for commit")
 
         result = manager.approach_inject()
 
         # This shouldn't trigger the warning since "All done" doesn't start with completion pattern
         # The warning only shows for steps starting with Final/Done/Complete/Finished
-        assert "A002" in result
+        assert approach_id2 in result
 
     def test_inject_compact_files(self, manager: LessonsManager) -> None:
         """Files list is compacted when more than 3."""
@@ -3510,6 +3588,160 @@ class TestHandoffContextInInjection:
             output = manager.approach_inject()
 
             assert "ref7777" in output or "git" in output.lower()
+
+
+# =============================================================================
+# Phase 2: Hash-based IDs for Multi-Agent Safety
+# =============================================================================
+
+
+class TestHashBasedIds:
+    """Tests for hash-based handoff IDs (hf-XXXXXXX format)."""
+
+    def test_new_handoff_gets_hash_id(self, manager: "LessonsManager"):
+        """New handoffs should get hash-based IDs with hf- prefix."""
+        handoff_id = manager.handoff_add(title="Test handoff")
+
+        # New format: hf- prefix followed by 7 hex characters
+        assert handoff_id.startswith("hf-")
+        assert len(handoff_id) == 10  # "hf-" (3) + 7 hex chars
+
+    def test_hash_id_format(self, manager: "LessonsManager"):
+        """Hash ID should have correct format: hf- prefix + 7 hex characters."""
+        handoff_id = manager.handoff_add(title="Format test")
+
+        # Validate format
+        assert handoff_id.startswith("hf-")
+        hash_part = handoff_id[3:]  # Remove "hf-" prefix
+        assert len(hash_part) == 7
+        # Should be valid hex characters
+        assert all(c in "0123456789abcdef" for c in hash_part)
+
+    def test_hash_ids_are_unique(self, manager: "LessonsManager"):
+        """Two handoffs with same title should get different IDs due to timestamp."""
+        import time
+
+        id1 = manager.handoff_add(title="Same title")
+        time.sleep(0.01)  # Small delay to ensure different timestamp
+        id2 = manager.handoff_add(title="Same title")
+
+        assert id1 != id2
+        assert id1.startswith("hf-")
+        assert id2.startswith("hf-")
+
+    def test_old_ids_still_parsed(self, manager: "LessonsManager"):
+        """Old A### format IDs should still be parseable."""
+        # Write a file with old format IDs directly
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        old_format_content = """# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Legacy handoff with old ID
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: 2025-12-28 | **Updated**: 2025-12-28
+- **Files**: test.py
+- **Description**: Testing old ID parsing
+
+**Tried**:
+1. [success] First step
+
+**Next**: Continue work
+
+---
+"""
+        handoffs_file.write_text(old_format_content)
+
+        # Should be able to get the old-format handoff
+        handoff = manager.handoff_get("A001")
+
+        assert handoff is not None
+        assert handoff.id == "A001"
+        assert handoff.title == "Legacy handoff with old ID"
+
+    def test_old_ids_preserved(self, manager: "LessonsManager"):
+        """Existing A### IDs should not change when file is re-saved."""
+        # Write a file with old format ID
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        old_format_content = """# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Legacy handoff
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: 2025-12-28 | **Updated**: 2025-12-28
+- **Files**:
+- **Description**: Testing preservation
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+        handoffs_file.write_text(old_format_content)
+
+        # Update the handoff (triggers re-save)
+        manager.handoff_update_status("A001", "in_progress")
+
+        # Read back and verify ID is preserved
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert handoff.id == "A001"  # ID should NOT change to hash format
+
+        # Verify in file content as well
+        content = handoffs_file.read_text()
+        assert "[A001]" in content
+
+    def test_blocked_by_accepts_both_formats(self, manager: "LessonsManager"):
+        """blocked_by field should work with both old A### and new hf- IDs."""
+        # Write a file with old format ID
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        old_format_content = """# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Blocker handoff
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: 2025-12-28 | **Updated**: 2025-12-28
+- **Files**:
+- **Description**: This blocks other work
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+        handoffs_file.write_text(old_format_content)
+
+        # Create a new handoff (will get hash ID)
+        new_id = manager.handoff_add(title="Blocked handoff")
+        assert new_id.startswith("hf-")
+
+        # Set blocked_by with both old and new format IDs
+        manager.handoff_update_blocked_by(new_id, ["A001", new_id])
+
+        # Verify blocked_by is stored correctly
+        handoff = manager.handoff_get(new_id)
+        assert handoff is not None
+        assert "A001" in handoff.blocked_by
+        assert new_id in handoff.blocked_by
 
 
 if __name__ == "__main__":
