@@ -50,8 +50,8 @@ cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
 cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/*.sh
 
-# Copy core manager
-cp core/cli.py ~/.config/claude-recall/
+# Copy core module
+cp -r core/*.py ~/.config/claude-recall/
 ```
 
 3. **Configure Claude Code:**
@@ -125,7 +125,7 @@ cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
 |----------|---------|
 | `$PROJECT/.claude-recall/` | Project lessons directory |
 | `$PROJECT/.claude-recall/LESSONS.md` | Project-specific lessons |
-| `$PROJECT/.claude-recall/APPROACHES.md` | Active work tracking |
+| `$PROJECT/.claude-recall/HANDOFFS.md` | Active work tracking |
 
 ### Repository vs Installed
 
@@ -139,7 +139,7 @@ adapters/claude-code/            → ~/.claude/hooks/
   precompact-hook.sh                 precompact-hook.sh
 
 core/                            → ~/.config/claude-recall/
-  lessons_manager.py                 lessons_manager.py
+  cli.py, manager.py, etc.           *.py files
 ```
 
 **Note:** Repository files are NOT used at runtime. Always reinstall after updates.
@@ -161,8 +161,8 @@ git pull
 cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
 cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
 
-# Update manager
-cp core/lessons_manager.py ~/.config/claude-recall/
+# Update core module
+cp -r core/*.py ~/.config/claude-recall/
 ```
 
 ## Configuration
@@ -202,7 +202,7 @@ ls -la ~/.config/claude-recall/
 
 # Check permissions
 file ~/.claude/hooks/*.sh
-file ~/.config/claude-recall/lessons_manager.py
+file ~/.config/claude-recall/cli.py
 ```
 
 ### Test Hooks
@@ -212,8 +212,8 @@ file ~/.config/claude-recall/lessons_manager.py
 echo '{"cwd":"/tmp"}' | ~/.claude/hooks/inject-hook.sh
 
 # Test manager directly
-python3 ~/.config/claude-recall/lessons_manager.py list
-python3 ~/.config/claude-recall/lessons_manager.py approach list
+python3 ~/.config/claude-recall/cli.py list
+python3 ~/.config/claude-recall/cli.py handoff list
 ```
 
 ### Verify in Session
@@ -252,7 +252,7 @@ Start a new Claude Code session. You should see:
 
 2. **Test manager directly:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py inject 5
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py inject 5
    ```
 
 ### Citations Not Tracked
@@ -271,16 +271,16 @@ Start a new Claude Code session. You should see:
    python3 --version
    ```
 
-### Approaches Not Showing
+### Handoffs Not Showing
 
-1. **Check approaches file:**
+1. **Check handoffs file:**
    ```bash
-   cat $PROJECT/.claude-recall/APPROACHES.md
+   cat $PROJECT/.claude-recall/HANDOFFS.md
    ```
 
-2. **Test approach injection:**
+2. **Test handoff injection:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py approach inject
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py handoff inject
    ```
 
 ### Decay Not Running
@@ -292,7 +292,7 @@ Start a new Claude Code session. You should see:
 
 2. **Force decay manually:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/lessons_manager.py decay 30
+   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py decay 30
    ```
 
 ## Backup and Migration
@@ -381,7 +381,7 @@ rm -rf ~/.config/claude-recall/
 ```bash
 # Recommended permissions
 chmod 755 ~/.claude/hooks/*.sh
-chmod 644 ~/.config/claude-recall/lessons_manager.py
+chmod 644 ~/.config/claude-recall/cli.py
 chmod 644 ~/.config/claude-recall/LESSONS.md
 chmod 700 ~/.config/claude-recall/.citation-state/
 ```

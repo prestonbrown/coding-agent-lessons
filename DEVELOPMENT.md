@@ -1,6 +1,6 @@
 # Development Guide
 
-Architecture, internals, and contributing guide for the coding-agent-lessons system.
+Architecture, internals, and contributing guide for the Claude Recall system.
 
 ## Architecture Overview
 
@@ -33,22 +33,25 @@ Architecture, internals, and contributing guide for the coding-agent-lessons sys
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Storage Layer                            │
-│  ~/.config/coding-agent-lessons/                             │
+│  ~/.config/claude-recall/                                    │
 │  ├── LESSONS.md           # System-wide lessons              │
 │  ├── .decay-last-run      # Decay timestamp                  │
 │  └── .citation-state/     # Per-session checkpoints          │
 │                                                              │
-│  $PROJECT/.coding-agent-lessons/                             │
+│  ~/.local/state/claude-recall/                               │
+│  └── debug.log            # Debug logs (XDG state)           │
+│                                                              │
+│  $PROJECT/.claude-recall/                                    │
 │  ├── LESSONS.md           # Project-specific lessons         │
-│  └── APPROACHES.md        # Active work tracking             │
+│  └── HANDOFFS.md          # Active work tracking             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Core Components
 
-### lessons_manager.py
+### Core Python Module
 
-The primary implementation in Python. Located at `core/lessons_manager.py`.
+The primary implementation in Python. Located at `core/` with entry point `cli.py`.
 
 #### Data Structures
 
@@ -256,9 +259,12 @@ A TypeScript plugin that hooks into OpenCode events:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LESSONS_BASE` | `~/.config/coding-agent-lessons` | System lessons location |
+| `CLAUDE_RECALL_BASE` | `~/.config/claude-recall` | System lessons location (preferred) |
+| `RECALL_BASE` | - | Legacy alias |
+| `LESSONS_BASE` | - | Legacy alias |
+| `CLAUDE_RECALL_STATE` | `~/.local/state/claude-recall` | Debug logs location |
 | `PROJECT_DIR` | Current directory | Project root |
-| `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
+| `CLAUDE_RECALL_DEBUG` | `0` | Debug level (0-3) |
 
 ## Markdown Format
 
@@ -338,12 +344,13 @@ export async function reconnect(delay: number = 1000): Promise<void> {
 ### Testing
 
 ```bash
-# Run all tests (201 tests)
+# Run all tests (420+ tests)
 python3 -m pytest tests/ -v
 
 # Run specific test file
-python3 -m pytest tests/test_lessons_manager.py -v  # 62 tests
-python3 -m pytest tests/test_handoffs.py -v         # 139 tests
+python3 -m pytest tests/test_lessons_manager.py -v
+python3 -m pytest tests/test_handoffs.py -v
+python3 -m pytest tests/test_debug_logger.py -v
 
 # Run specific test
 python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools -v
@@ -374,7 +381,7 @@ python3 core/lessons_manager.py approach list
 python3 core/lessons_manager.py inject 5
 
 # Check decay state
-cat ~/.config/coding-agent-lessons/.decay-last-run
+cat ~/.config/claude-recall/.decay-last-run
 ```
 
 ### Common Issues

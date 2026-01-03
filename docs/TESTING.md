@@ -8,14 +8,15 @@ The test suite uses **pytest** with Python's standard library. Tests are organiz
 
 ```
 tests/
-├── test_lessons_manager.py   # Core lessons + CLI (400+ tests)
-└── test_handoffs.py          # Handoffs system
+├── test_lessons_manager.py   # Core lessons + CLI tests
+├── test_handoffs.py          # Handoffs system tests
+└── test_debug_logger.py      # Debug logger tests
 ```
 
 ## Running Tests
 
 ```bash
-# Run all tests (400+ tests)
+# Run all tests (420+ tests)
 python3 -m pytest tests/ -v
 
 # Run with coverage
@@ -397,7 +398,7 @@ manager.add_lesson("pattern", "Title", "Content")  # TypeError!
 |-----------|-----------------|----------------|
 | Python CLI | `core/cli.py` | `~/.config/claude-recall/cli.py` |
 | Debug logger | `core/debug_logger.py` | `~/.config/claude-recall/debug_logger.py` |
-| Bash wrapper | `core/lessons-manager.sh` | `~/.config/claude-recall/lessons-manager.sh` |
+| Debug logs | N/A | `~/.local/state/claude-recall/debug.log` |
 | Inject hook | `adapters/claude-code/inject-hook.sh` | `~/.claude/hooks/inject-hook.sh` |
 | Smart inject | `adapters/claude-code/smart-inject-hook.sh` | `~/.claude/hooks/smart-inject-hook.sh` |
 | Stop hook | `adapters/claude-code/stop-hook.sh` | `~/.claude/hooks/stop-hook.sh` |
