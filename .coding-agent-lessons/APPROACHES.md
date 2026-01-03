@@ -7,14 +7,24 @@
 
 
 ### [A003] Add promotable flag to lessons
-- **Status**: not_started | **Phase**: research | **Agent**: user
-- **Created**: 2025-12-29 | **Updated**: 2025-12-29
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2025-12-29 | **Updated**: 2026-01-02
 - **Files**: 
 - **Description**: 
+- **Checkpoint**: [A007] Recall: Context Engineering System
+- **Last Session**: 2026-01-02
 
 **Tried**:
+1. [success] [A007] Phases 0-3: Foundation
+2. [success] [A007] Phase 4: Resume with validation
+3. [success] [A007] Phase 5: Ready queue
+4. [success] [A007] Phase 6: Enhanced PreCompact hook
+5. [success] [A007] Phase 7: Injection format updates
+6. [success] [A007] Phase 8: Stealth mode
+7. [success] [A007] Phase 9: SessionEnd hook
+8. [success] [A007] Phase 10: Dependency inference
 
-**Next**: 
+**Next**: [A007] Final system code review
 
 ---
 
