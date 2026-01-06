@@ -21,9 +21,16 @@ def temp_log_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def make_timestamp(hours_ago: int = 0) -> str:
-    """Generate an ISO timestamp for N hours ago."""
-    dt = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+def make_timestamp(hours_ago: int = 0, minutes_ago: int = 0) -> str:
+    """Generate an ISO timestamp for N hours/minutes ago."""
+    dt = datetime.now(timezone.utc) - timedelta(hours=hours_ago, minutes=minutes_ago)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_timestamp_today(offset_minutes: int = 0) -> str:
+    """Generate a timestamp guaranteed to be today UTC (at midnight + offset)."""
+    today_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    dt = today_utc + timedelta(minutes=offset_minutes)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -41,7 +48,7 @@ def log_with_sessions_today(temp_log_dir: Path) -> Path:
         {
             "event": "session_start",
             "level": "info",
-            "timestamp": make_timestamp(0),
+            "timestamp": make_timestamp_today(60),  # Today at 01:00 UTC
             "session_id": "sess-1",
             "pid": 1,
             "project": "proj-a",
@@ -52,7 +59,7 @@ def log_with_sessions_today(temp_log_dir: Path) -> Path:
         {
             "event": "session_start",
             "level": "info",
-            "timestamp": make_timestamp(1),
+            "timestamp": make_timestamp_today(120),  # Today at 02:00 UTC
             "session_id": "sess-2",
             "pid": 2,
             "project": "proj-b",
@@ -63,7 +70,7 @@ def log_with_sessions_today(temp_log_dir: Path) -> Path:
         {
             "event": "citation",
             "level": "info",
-            "timestamp": make_timestamp(0),
+            "timestamp": make_timestamp_today(60),  # Today at 01:00 UTC
             "session_id": "sess-1",
             "pid": 1,
             "project": "proj-a",
