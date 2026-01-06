@@ -185,6 +185,28 @@ install_core() {
     cp "$SCRIPT_DIR/core/debug_logger.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/__init__.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/lesson-reminder-hook.sh" "$CLAUDE_RECALL_BASE/"
+
+    # Copy TUI module if it exists
+    if [[ -d "$SCRIPT_DIR/core/tui" ]]; then
+        mkdir -p "$CLAUDE_RECALL_BASE/tui/styles"
+        cp "$SCRIPT_DIR/core/tui/"*.py "$CLAUDE_RECALL_BASE/tui/"
+        [[ -f "$SCRIPT_DIR/core/tui/styles/app.tcss" ]] && cp "$SCRIPT_DIR/core/tui/styles/app.tcss" "$CLAUDE_RECALL_BASE/tui/styles/"
+        log_success "Installed TUI module to $CLAUDE_RECALL_BASE/tui/"
+    fi
+
+    # Install recall-watch command
+    if [[ -f "$SCRIPT_DIR/bin/recall-watch" ]]; then
+        mkdir -p "$HOME/.local/bin"
+        cp "$SCRIPT_DIR/bin/recall-watch" "$HOME/.local/bin/"
+        chmod +x "$HOME/.local/bin/recall-watch"
+        log_success "Installed recall-watch to ~/.local/bin/"
+
+        # Check if ~/.local/bin is in PATH
+        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            log_warn "Add ~/.local/bin to your PATH to use 'recall-watch' command"
+        fi
+    fi
+
     chmod +x "$CLAUDE_RECALL_BASE/lessons-manager.sh" "$CLAUDE_RECALL_BASE/lesson-reminder-hook.sh"
     log_success "Installed lessons-manager.sh to $CLAUDE_RECALL_BASE/"
     log_success "Installed Python modules (cli.py, manager.py, etc.) to $CLAUDE_RECALL_BASE/"
@@ -256,7 +278,15 @@ EOF
     # Update settings.json with hooks (including periodic reminder and PreCompact)
     local settings_file="$claude_dir/settings.json"
     local hooks_config='{
-  "claudeRecall": {"enabled": true, "remindEvery": 12},
+  "claudeRecall": {
+    "enabled": true,
+    "remindEvery": 12,
+    "topLessonsToShow": 3,
+    "relevanceTopN": 5,
+    "promotionThreshold": 50,
+    "decayIntervalDays": 7,
+    "maxLessons": 30
+  },
   "hooks": {
     "SessionStart": [{"hooks": [
       {"type": "command", "command": "bash '"$hooks_dir"'/inject-hook.sh", "timeout": 5000},

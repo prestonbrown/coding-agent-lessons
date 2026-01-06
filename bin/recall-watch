@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# recall-watch - Launch the Claude Recall debug TUI viewer
+#
+# Usage:
+#   recall-watch              # Full TUI
+#   recall-watch --summary    # One-shot text summary
+#   recall-watch --tail       # Colorized log tail
+#   recall-watch -p project   # Filter to specific project
+
+set -euo pipefail
+
+# Find the claude-recall installation
+# Follow symlinks to get the real script location
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+# Check if we're in dev mode (running from repo)
+if [[ -f "$SCRIPT_DIR/../core/cli.py" ]]; then
+    RECALL_DIR="$SCRIPT_DIR/.."
+    CLI_PATH="$RECALL_DIR/core/cli.py"
+elif [[ -f "$HOME/.config/claude-recall/cli.py" ]]; then
+    # Installed location (flat structure)
+    RECALL_DIR="$HOME/.config/claude-recall"
+    CLI_PATH="$RECALL_DIR/cli.py"
+else
+    echo "Error: Cannot find claude-recall installation" >&2
+    exit 1
+fi
+
+# Use venv if available, otherwise system python
+if [[ -f "$RECALL_DIR/.venv/bin/python3" ]]; then
+    PYTHON="$RECALL_DIR/.venv/bin/python3"
+else
+    PYTHON="python3"
+fi
+
+# Check for textual (required for TUI mode)
+if [[ "${1:-}" != "--summary" && "${1:-}" != "--tail" ]]; then
+    if ! "$PYTHON" -c "import textual" 2>/dev/null; then
+        echo "TUI mode requires textual. Install with:"
+        echo "  pip install textual textual-plotext"
+        echo ""
+        echo "Or use --summary or --tail for text-only modes."
+        exit 1
+    fi
+fi
+
+exec "$PYTHON" "$CLI_PATH" watch "$@"

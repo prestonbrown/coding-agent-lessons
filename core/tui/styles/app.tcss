@@ -1,0 +1,227 @@
+/* Claude Recall Monitor - TUI Styles */
+
+/* Main screen layout */
+Screen {
+    background: $surface;
+}
+
+/* Header bar */
+#header {
+    dock: top;
+    height: 1;
+    background: $primary;
+    color: $text;
+    padding: 0 1;
+}
+
+/* Status bar at bottom */
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: $surface-darken-1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* Tab container */
+TabbedContent {
+    height: 100%;
+}
+
+TabPane {
+    padding: 0 1;
+}
+
+/* Event log table/list */
+#event-log {
+    height: 100%;
+}
+
+#event-log > .datatable--header {
+    background: $surface-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+#event-log > .datatable--cursor {
+    background: $primary-darken-1;
+}
+
+/* RichLog widget */
+RichLog {
+    height: 100%;
+    border: solid $primary-darken-2;
+    scrollbar-size: 1 1;
+}
+
+/* Health stats panel */
+#health-panel {
+    height: 100%;
+    padding: 1;
+}
+
+.stat-box {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+.stat-box-title {
+    text-style: bold;
+    color: $text;
+}
+
+.stat-value {
+    color: $success;
+}
+
+.stat-value-warning {
+    color: $warning;
+}
+
+.stat-value-error {
+    color: $error;
+}
+
+/* State overview panel */
+#state-panel {
+    height: 100%;
+    padding: 1;
+}
+
+/* Session list */
+#session-list {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+#session-events {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+/* Section headers */
+.section-title {
+    width: 100%;
+    text-style: bold;
+    background: $surface-darken-1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Event type colors - applied via markup */
+.event-session {
+    color: cyan;
+}
+
+.event-citation {
+    color: green;
+}
+
+.event-error {
+    color: red;
+    text-style: bold;
+}
+
+.event-decay {
+    color: yellow;
+}
+
+.event-handoff {
+    color: magenta;
+}
+
+.event-timing {
+    color: $text-muted;
+}
+
+/* Handoff status colors */
+.handoff-active {
+    color: $success;
+}
+
+.handoff-blocked {
+    color: $error;
+}
+
+.handoff-review {
+    color: $warning;
+}
+
+/* Paused indicator */
+.paused-indicator {
+    background: $warning;
+    color: $text;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* Container panels */
+Vertical {
+    height: 100%;
+}
+
+Horizontal {
+    height: auto;
+}
+
+/* Static text blocks */
+Static {
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
+
+/* Loading indicator */
+LoadingIndicator {
+    height: 3;
+    width: 100%;
+}
+
+/* Error message display */
+.error-message {
+    color: $error;
+    text-style: bold;
+    padding: 1;
+    border: solid $error;
+}
+
+/* Info message */
+.info-message {
+    color: $text-muted;
+    padding: 1;
+}
+
+/* Charts panel */
+#charts-panel {
+    height: 100%;
+    padding: 1;
+}
+
+#sparklines-panel {
+    height: auto;
+    min-height: 8;
+    padding: 0 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+#charts-row {
+    height: 1fr;
+    min-height: 15;
+}
+
+#activity-chart {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-darken-2;
+    margin-right: 1;
+}
+
+#timing-chart {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-darken-2;
+}
