@@ -509,6 +509,12 @@ uninstall() {
     rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"
 
+    # Remove recall-watch command
+    if [[ -f "$HOME/.local/bin/recall-watch" ]]; then
+        rm -f "$HOME/.local/bin/recall-watch"
+        log_info "Removed recall-watch from ~/.local/bin/"
+    fi
+
     # Helper function to clean up a config directory
     cleanup_config_dir() {
         local dir="$1"
@@ -523,10 +529,13 @@ uninstall() {
             rm -f "$dir/handoffs.py"
             rm -f "$dir/debug_logger.py"
             rm -f "$dir/__init__.py"
+            rm -f "$dir/_version.py"
             rm -f "$dir/lessons_manager.py"
             rm -f "$dir/lesson-reminder-hook.sh"
             rm -f "$dir/.reminder-state"
             rm -rf "$dir/plugins"
+            rm -rf "$dir/tui"
+            rm -rf "$dir/.venv"
             log_info "Cleaned up $dir"
         fi
     }
@@ -537,14 +546,21 @@ uninstall() {
         cleanup_config_dir "$old_path"
     done
 
-    # Clean up state directory (logs)
+    # Clean up state directory (logs, decay state) but PRESERVE lessons
     if [[ -d "$CLAUDE_RECALL_STATE" ]]; then
-        rm -rf "$CLAUDE_RECALL_STATE"
-        log_info "Removed state directory: $CLAUDE_RECALL_STATE"
+        # Remove everything EXCEPT LESSONS.md
+        find "$CLAUDE_RECALL_STATE" -type f ! -name "LESSONS.md" -delete 2>/dev/null || true
+        find "$CLAUDE_RECALL_STATE" -type d -empty -delete 2>/dev/null || true
+        if [[ -f "$CLAUDE_RECALL_STATE/LESSONS.md" ]]; then
+            log_info "Preserved system lessons at: $CLAUDE_RECALL_STATE/LESSONS.md"
+        else
+            rmdir "$CLAUDE_RECALL_STATE" 2>/dev/null || true
+        fi
     fi
 
     log_success "Uninstalled adapters. Lessons preserved."
-    log_info "To fully remove lessons: rm -rf $CLAUDE_RECALL_BASE"
+    log_info "To fully remove project lessons: rm -rf $CLAUDE_RECALL_BASE"
+    log_info "To fully remove system lessons: rm -rf $CLAUDE_RECALL_STATE"
 
     # Show any remaining old paths that might have lessons
     for old_path in "${OLD_SYSTEM_PATHS[@]}"; do
