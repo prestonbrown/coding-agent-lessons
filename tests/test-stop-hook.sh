@@ -33,7 +33,7 @@ setup() {
     mkdir -p "$TEST_DIR/.claude"
 
     # Create settings.json with lessons enabled
-    echo '{"lessonsSystem":{"enabled":true}}' > "$TEST_DIR/.claude/settings.json"
+    echo '{"claudeRecall":{"enabled":true}}' > "$TEST_DIR/.claude/settings.json"
 
     # Symlink manager to where hook expects it (HOME is overridden to TEST_DIR)
     ln -sf "$MANAGER" "$CLAUDE_RECALL_BASE/lessons-manager.sh"

@@ -28,8 +28,18 @@ else
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 
+# Read relevanceTopN from settings (default: 5)
+get_relevance_top_n() {
+    local config="$HOME/.claude/settings.json"
+    if [[ -f "$config" ]]; then
+        jq -r '.claudeRecall.relevanceTopN // 5' "$config" 2>/dev/null || echo "5"
+    else
+        echo "5"
+    fi
+}
+
 # Tunable parameters for relevance scoring
-RELEVANCE_TOP_N=5          # Number of lessons to inject after scoring
+RELEVANCE_TOP_N=$(get_relevance_top_n)  # Number of lessons to inject after scoring
 SCORE_RELEVANCE_TIMEOUT=10 # Haiku timeout in seconds (10s handles ~100 lessons)
 MIN_PROMPT_LENGTH=20       # Skip scoring for very short prompts
 MIN_RELEVANCE_SCORE=3      # Only include lessons scored >= this threshold
@@ -41,7 +51,7 @@ RELEVANCE_TIMEOUT=$SCORE_RELEVANCE_TIMEOUT
 is_enabled() {
     local config="$HOME/.claude/settings.json"
     [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.lessonsSystem.enabled // true' "$config" 2>/dev/null || echo "true")
+        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
         [[ "$enabled" == "true" ]]
     } || return 0
 }

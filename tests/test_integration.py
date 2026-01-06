@@ -54,7 +54,7 @@ def integration_env(tmp_path: Path) -> Dict[str, Path]:
     hooks_dir.mkdir()
 
     # Create settings.json
-    settings = {"lessonsSystem": {"enabled": True}}
+    settings = {"claudeRecall": {"enabled": True}}
     (claude_dir / "settings.json").write_text(json.dumps(settings))
 
     # Copy actual hooks from adapters/claude-code

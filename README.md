@@ -253,9 +253,15 @@ Logs written to `~/.local/state/claude-recall/debug.log` (XDG state directory).
 In `~/.claude/settings.json`:
 ```json
 {
-  "lessonsSystem": {
+  "claudeRecall": {
     "enabled": true,
-    "remindEvery": 12
+    "debugLevel": 0,
+    "remindEvery": 12,
+    "topLessonsToShow": 3,
+    "relevanceTopN": 5,
+    "promotionThreshold": 50,
+    "decayIntervalDays": 7,
+    "maxLessons": 30
   },
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
@@ -268,8 +274,16 @@ In `~/.claude/settings.json`:
 }
 ```
 
-- `lessonsSystem.enabled`: Enable/disable the lessons system
-- `lessonsSystem.remindEvery`: Show high-priority lesson reminders every N prompts (default: 12)
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | true | Enable/disable the lessons system |
+| `debugLevel` | 0 | 0=off, 1=info, 2=debug, 3=trace |
+| `remindEvery` | 12 | Show lesson duty reminder every N prompts |
+| `topLessonsToShow` | 3 | Lessons injected at session start |
+| `relevanceTopN` | 5 | Lessons injected by relevance scoring |
+| `promotionThreshold` | 50 | Uses before project→system promotion |
+| `decayIntervalDays` | 7 | Days between decay runs |
+| `maxLessons` | 30 | Max lessons per level before eviction |
 
 ## Agent Behavior
 

@@ -28,7 +28,7 @@ fi
 is_enabled() {
     local config="$HOME/.claude/settings.json"
     [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.lessonsSystem.enabled // true' "$config" 2>/dev/null || echo "true")
+        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
         [[ "$enabled" == "true" ]]
     } || return 0
 }

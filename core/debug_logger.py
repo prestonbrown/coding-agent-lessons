@@ -55,7 +55,7 @@ def _read_settings_debug_level() -> Optional[int]:
             return None
         with open(CLAUDE_SETTINGS_PATH) as f:
             settings = json.load(f)
-        level = settings.get("lessonsSystem", {}).get("debugLevel")
+        level = settings.get("claudeRecall", {}).get("debugLevel")
         if level is not None:
             return int(level)
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
@@ -68,7 +68,7 @@ def _get_debug_level() -> int:
 
     Checks in order of precedence:
     1. CLAUDE_RECALL_DEBUG env var (temporary override)
-    2. lessonsSystem.debugLevel in ~/.claude/settings.json
+    2. claudeRecall.debugLevel in ~/.claude/settings.json
     3. Default: 1
     """
     # Check env vars first (highest precedence)

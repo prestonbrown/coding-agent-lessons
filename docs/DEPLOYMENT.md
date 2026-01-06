@@ -73,7 +73,7 @@ Add to `~/.claude/settings.json`:
       }
     ]
   },
-  "lessonsSystem": {
+  "claudeRecall": {
     "enabled": true
   }
 }
@@ -183,7 +183,7 @@ In `~/.claude/settings.json`:
 
 ```json
 {
-  "lessonsSystem": {
+  "claudeRecall": {
     "enabled": true
   }
 }
@@ -335,7 +335,7 @@ cp $OLD_PROJECT/.claude-recall/LESSONS.md $NEW_PROJECT/.claude-recall/
 In `~/.claude/settings.json`:
 ```json
 {
-  "lessonsSystem": {
+  "claudeRecall": {
     "enabled": false
   }
 }
