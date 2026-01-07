@@ -33,15 +33,22 @@ MAX_LOG_SIZE_MB = 50  # 50MB keeps ~500K events
 MAX_LOG_FILES = 3  # 3 files = 150MB max disk usage
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
-# Session ID - generated once per process
+# Session ID - from environment or generated once per process
 _SESSION_ID: Optional[str] = None
 
 
 def _get_session_id() -> str:
-    """Get or create a session ID for correlating events."""
+    """Get or create a session ID for correlating events.
+
+    Checks CLAUDE_RECALL_SESSION env var first (set by hooks to correlate
+    events across hook invocations). Falls back to generating a random UUID.
+    """
     global _SESSION_ID
     if _SESSION_ID is None:
-        _SESSION_ID = uuid.uuid4().hex[:12]
+        # Check for session ID from hook scripts
+        _SESSION_ID = os.environ.get("CLAUDE_RECALL_SESSION")
+        if not _SESSION_ID:
+            _SESSION_ID = uuid.uuid4().hex[:12]
     return _SESSION_ID
 
 
@@ -409,7 +416,7 @@ class DebugLogger:
             Start time (time.perf_counter()) for passing to hook_end
         """
         start = time.perf_counter()
-        if self._level < 2:
+        if self._level < 1:
             return start
 
         event = {
@@ -430,7 +437,7 @@ class DebugLogger:
             start_time: Value returned from hook_start
             phases: Dict of phase_name -> duration_ms for breakdown
         """
-        if self._level < 2:
+        if self._level < 1:
             return
 
         total_ms = (time.perf_counter() - start_time) * 1000
@@ -453,7 +460,7 @@ class DebugLogger:
             duration_ms: How long this phase took
             details: Optional additional context
         """
-        if self._level < 2:
+        if self._level < 1:
             return
 
         event = {

@@ -11,10 +11,41 @@ Provides real-time monitoring of lessons system activity with:
 """
 
 import asyncio
+import platform
+import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
+
+
+@lru_cache(maxsize=1)
+def _get_time_format() -> str:
+    """Get the appropriate time format string based on system preferences.
+
+    On macOS: checks AppleICUForce24HourTime preference
+      - 1 = 24h format → %H:%M:%S
+      - 0 or unset = 12h format → %r (with AM/PM)
+    On other platforms: uses %X (locale-dependent)
+    """
+    if platform.system() != "Darwin":
+        return "%X"  # Trust locale on Linux/other
+
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "NSGlobalDomain", "AppleICUForce24HourTime"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode == 0 and result.stdout.strip() == "1":
+            return "%H:%M:%S"  # User prefers 24h
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    return "%r"  # Default to 12h AM/PM on macOS
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -106,6 +137,22 @@ def make_sparkline(values: List[float], width: int = 0) -> str:
     return "".join(result)
 
 
+def _format_event_time(event: DebugEvent) -> str:
+    """Format event timestamp in locale-aware format, converted to local timezone."""
+    dt = event.timestamp_dt
+    if dt is None:
+        # Fallback to raw timestamp extraction
+        ts = event.timestamp
+        if "T" in ts:
+            return ts.split("T")[1][:8]
+        return ts[:8] if len(ts) >= 8 else ts
+    # Ensure timezone-aware and convert to local
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local_dt = dt.astimezone()
+    return local_dt.strftime(_get_time_format())
+
+
 def format_event_rich(event: DebugEvent) -> str:
     """
     Format an event as a Rich-markup string for Textual widgets.
@@ -116,12 +163,7 @@ def format_event_rich(event: DebugEvent) -> str:
     Returns:
         Formatted string with Rich markup
     """
-    # Extract time portion
-    ts = event.timestamp
-    if "T" in ts:
-        time_part = ts.split("T")[1][:8]
-    else:
-        time_part = ts[:8] if len(ts) >= 8 else ts
+    time_part = _format_event_time(event)
 
     color = EVENT_COLORS.get(event.event, "")
     event_name = event.event[:18].ljust(18)
@@ -198,6 +240,80 @@ def _format_event_details(event: DebugEvent) -> str:
         return ""
 
 
+# Session tab formatting helpers
+SESSION_ACTIVE_THRESHOLD_MINUTES = 5
+
+
+def _format_session_time(dt: Optional[datetime]) -> str:
+    """Format datetime in locale-aware format, converted to local timezone.
+
+    Shows time only for today, date+time for other days.
+    Uses system time format preference (12h vs 24h).
+    """
+    if dt is None:
+        return "--:--"
+
+    # Ensure dt is timezone-aware
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    # Convert to local timezone for display
+    local_dt = dt.astimezone()
+    local_now = datetime.now().astimezone()
+    today = local_now.date()
+    dt_date = local_dt.date()
+
+    time_fmt = _get_time_format()
+    if dt_date == today:
+        # Today: show just time
+        return local_dt.strftime(time_fmt)
+    elif dt_date.year == today.year:
+        # This year: show month/day + time (compact)
+        return local_dt.strftime(f"%b %d {time_fmt}")
+    else:
+        # Different year: show full date + time
+        return local_dt.strftime(f"%x {time_fmt}")
+
+
+def _format_duration(ms: float) -> str:
+    """Format duration in ms as human-readable string."""
+    if ms <= 0:
+        return "--"
+    seconds = ms / 1000
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h {mins}m"
+
+
+def _format_tokens(tokens: int) -> str:
+    """Format token count with k suffix for thousands."""
+    if tokens == 0:
+        return "--"
+    if tokens >= 1000:
+        return f"{tokens / 1000:.1f}k"
+    return str(tokens)
+
+
+def _compute_session_status(last_event_time: Optional[datetime]) -> str:
+    """Determine if session is Active or Idle based on last activity."""
+    if last_event_time is None:
+        return "Idle"
+
+    now = datetime.now(timezone.utc)
+    # Ensure last_event_time is timezone-aware
+    if last_event_time.tzinfo is None:
+        last_event_time = last_event_time.replace(tzinfo=timezone.utc)
+
+    age_minutes = (now - last_event_time).total_seconds() / 60
+    return "Active" if age_minutes < SESSION_ACTIVE_THRESHOLD_MINUTES else "Idle"
+
+
 class RecallMonitorApp(App):
     """
     Main Textual application for claude-recall monitoring.
@@ -218,6 +334,8 @@ class RecallMonitorApp(App):
         Binding("f5", "switch_tab('charts')", "Charts"),
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "refresh", "Refresh"),
+        Binding("a", "toggle_all_sessions", "All Sessions"),
+        Binding("ctrl+c", "copy_session", "Copy", priority=True),
     ]
 
     def __init__(
@@ -240,6 +358,11 @@ class RecallMonitorApp(App):
         self._paused = False
         self._last_event_count = 0
         self._refresh_timer = None
+        # Session tab state
+        self._session_data: dict = {}  # Raw data by session_id for sorting
+        self._session_sort_column: Optional[str] = None
+        self._session_sort_reverse: bool = False
+        self._show_all_sessions: bool = False  # False = only "full" sessions with session_start
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -492,35 +615,171 @@ class RecallMonitorApp(App):
         state_widget.update("\n".join(lines))
 
     def _setup_session_list(self) -> None:
-        """Initialize the session list DataTable."""
+        """Initialize the session list DataTable with sortable columns."""
         session_table = self.query_one("#session-list", DataTable)
-        session_table.add_columns("Session ID", "Project", "Events", "Errors", "Citations")
+
+        # Enable row cursor for RowHighlighted events on arrow key navigation
+        session_table.cursor_type = "row"
+
+        # Add columns with keys for sorting
+        session_table.add_column("Session ID", key="session_id")
+        session_table.add_column("Project", key="project")
+        session_table.add_column("Started", key="started")
+        session_table.add_column("Last", key="last_activity")
+        session_table.add_column("Duration", key="duration")
+        session_table.add_column("Status", key="status")
+        session_table.add_column("Events", key="events")
+        session_table.add_column("Tokens", key="tokens")
+        session_table.add_column("Cites", key="citations")
+        session_table.add_column("Errs", key="errors")
+
+        # Clear any existing session data
+        self._session_data.clear()
 
         # Populate with sessions
-        sessions = self.log_reader.get_sessions()[:20]  # Limit to 20 most recent
+        sessions = self.log_reader.get_sessions()[:50]  # Fetch more to allow for filtering
+        added_count = 0
 
         for session_id in sessions:
+            if added_count >= 20:  # Limit display to 20 sessions
+                break
+
             session_stats = self.stats.compute_session_stats(session_id)
+
+            # Filter: when _show_all_sessions is False, only show "full" sessions
+            # A "full" session has a session_start event
+            if not self._show_all_sessions and not session_stats.get("has_session_start", False):
+                continue
+
+            self._session_data[session_id] = session_stats
+            added_count += 1
+
+            # Format display values
             errors = session_stats["errors"]
             error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
 
+            status = _compute_session_status(session_stats["last_event_time"])
+            status_str = (
+                f"[green]{status}[/green]"
+                if status == "Active"
+                else f"[dim]{status}[/dim]"
+            )
+
             session_table.add_row(
                 session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                session_stats["project"][:15],
+                (session_stats["project"] or "")[:12],
+                _format_session_time(session_stats["first_event_time"]),
+                _format_session_time(session_stats["last_event_time"]),
+                _format_duration(session_stats["duration_ms"]),
+                status_str,
                 str(session_stats["event_count"]),
-                error_str,
+                _format_tokens(session_stats["tokens"]),
                 str(session_stats["citations"]),
+                error_str,
                 key=session_id,
             )
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle session selection in the session list."""
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Handle session highlight (arrow key navigation) in the session list."""
         if event.data_table.id != "session-list":
+            return
+
+        if event.row_key is None:
             return
 
         session_id = event.row_key.value
         if session_id:
             self._show_session_events(session_id)
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        """Handle column header click to sort the session table."""
+        if event.data_table.id != "session-list":
+            return
+
+        if event.column_key is None:
+            return
+
+        column_key = event.column_key.value
+
+        # Toggle sort direction if clicking same column
+        if column_key == self._session_sort_column:
+            self._session_sort_reverse = not self._session_sort_reverse
+        else:
+            self._session_sort_column = column_key
+            self._session_sort_reverse = False
+
+        self._sort_session_table(column_key, self._session_sort_reverse)
+
+    def _sort_session_table(self, column_key: str, reverse: bool) -> None:
+        """Sort the session table by the given column."""
+        session_table = self.query_one("#session-list", DataTable)
+
+        # Define sort key based on column
+        def get_sort_value(session_id: str):
+            data = self._session_data.get(session_id, {})
+            if column_key == "session_id":
+                return session_id
+            elif column_key == "project":
+                return data.get("project", "")
+            elif column_key == "started":
+                return data.get("first_event_time") or datetime.min.replace(
+                    tzinfo=timezone.utc
+                )
+            elif column_key == "last_activity":
+                return data.get("last_event_time") or datetime.min.replace(
+                    tzinfo=timezone.utc
+                )
+            elif column_key == "duration":
+                return data.get("duration_ms", 0)
+            elif column_key == "status":
+                # Sort Active before Idle
+                status = _compute_session_status(data.get("last_event_time"))
+                return 0 if status == "Active" else 1
+            elif column_key == "events":
+                return data.get("event_count", 0)
+            elif column_key == "tokens":
+                return data.get("tokens", 0)
+            elif column_key == "citations":
+                return data.get("citations", 0)
+            elif column_key == "errors":
+                return data.get("errors", 0)
+            return ""
+
+        # Get sorted session IDs
+        sorted_sessions = sorted(
+            self._session_data.keys(),
+            key=get_sort_value,
+            reverse=reverse,
+        )
+
+        # Clear and repopulate table in sorted order
+        session_table.clear()
+        for session_id in sorted_sessions:
+            session_stats = self._session_data[session_id]
+
+            errors = session_stats["errors"]
+            error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
+
+            status = _compute_session_status(session_stats["last_event_time"])
+            status_str = (
+                f"[green]{status}[/green]"
+                if status == "Active"
+                else f"[dim]{status}[/dim]"
+            )
+
+            session_table.add_row(
+                session_id[:12] + "..." if len(session_id) > 15 else session_id,
+                (session_stats["project"] or "")[:12],
+                _format_session_time(session_stats["first_event_time"]),
+                _format_session_time(session_stats["last_event_time"]),
+                _format_duration(session_stats["duration_ms"]),
+                status_str,
+                str(session_stats["event_count"]),
+                _format_tokens(session_stats["tokens"]),
+                str(session_stats["citations"]),
+                error_str,
+                key=session_id,
+            )
 
     def _show_session_events(self, session_id: str) -> None:
         """Display events for a selected session."""
@@ -678,6 +937,124 @@ class RecallMonitorApp(App):
         self._update_charts()
         self.notify("Refreshed")
 
+    def action_toggle_all_sessions(self) -> None:
+        """Toggle between showing all sessions vs only full sessions."""
+        self._show_all_sessions = not self._show_all_sessions
+        mode = "all" if self._show_all_sessions else "full"
+        self.notify(f"Showing {mode} sessions")
+        self._refresh_session_list()
+
+    def action_copy_session(self) -> None:
+        """Copy highlighted session data to clipboard."""
+        try:
+            session_table = self.query_one("#session-list", DataTable)
+        except Exception:
+            return
+
+        # Get highlighted row key
+        if session_table.cursor_row is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        row_key = session_table.get_row_at(session_table.cursor_row)
+        if row_key is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        # Get the session_id from row key (it's the key we set when adding rows)
+        try:
+            # DataTable stores row keys; get the key for cursor row
+            row_key_obj = list(session_table.rows.keys())[session_table.cursor_row]
+            session_id = row_key_obj.value
+        except (IndexError, AttributeError):
+            self.notify("Could not get session ID", severity="error")
+            return
+
+        if not session_id or session_id not in self._session_data:
+            self.notify("Session data not found", severity="error")
+            return
+
+        # Format session data for clipboard
+        data = self._session_data[session_id]
+        text = (
+            f"Session: {session_id} | "
+            f"Project: {data.get('project', '')} | "
+            f"Events: {data.get('event_count', 0)} | "
+            f"Tokens: {data.get('tokens', 0)} | "
+            f"Started: {_format_session_time(data.get('first_event_time'))}"
+        )
+
+        # Copy to clipboard using platform-appropriate command
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            elif sys.platform == "win32":
+                subprocess.run(["clip"], input=text.encode(), check=True, shell=True)
+            else:
+                # Linux - try xclip first, fall back to xsel
+                try:
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard"],
+                        input=text.encode(),
+                        check=True,
+                    )
+                except FileNotFoundError:
+                    subprocess.run(
+                        ["xsel", "--clipboard", "--input"],
+                        input=text.encode(),
+                        check=True,
+                    )
+            self.notify("Copied to clipboard")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            self.notify(f"Copy failed: {e}", severity="error")
+
+    def _refresh_session_list(self) -> None:
+        """Refresh the session list table with current filter settings."""
+        session_table = self.query_one("#session-list", DataTable)
+        session_table.clear()
+        self._session_data.clear()
+
+        # Repopulate with sessions using current filter
+        sessions = self.log_reader.get_sessions()[:50]
+        added_count = 0
+
+        for session_id in sessions:
+            if added_count >= 20:
+                break
+
+            session_stats = self.stats.compute_session_stats(session_id)
+
+            # Apply filter based on _show_all_sessions
+            if not self._show_all_sessions and not session_stats.get("has_session_start", False):
+                continue
+
+            self._session_data[session_id] = session_stats
+            added_count += 1
+
+            errors = session_stats["errors"]
+            error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
+
+            status = _compute_session_status(session_stats["last_event_time"])
+            status_str = (
+                f"[green]{status}[/green]"
+                if status == "Active"
+                else f"[dim]{status}[/dim]"
+            )
+
+            session_table.add_row(
+                session_id[:12] + "..." if len(session_id) > 15 else session_id,
+                (session_stats["project"] or "")[:12],
+                _format_session_time(session_stats["first_event_time"]),
+                _format_session_time(session_stats["last_event_time"]),
+                _format_duration(session_stats["duration_ms"]),
+                status_str,
+                str(session_stats["event_count"]),
+                _format_tokens(session_stats["tokens"]),
+                str(session_stats["citations"]),
+                error_str,
+                key=session_id,
+            )
+
     def _get_dynamic_subtitle(self) -> str:
         """Build dynamic subtitle showing status."""
         parts = []
@@ -686,7 +1063,7 @@ class RecallMonitorApp(App):
         if self._paused:
             parts.append("[PAUSED]")
 
-        now = datetime.now().strftime("%H:%M:%S")
+        now = datetime.now().strftime(_get_time_format())
         parts.append(now)
 
         return " | ".join(parts) if parts else ""

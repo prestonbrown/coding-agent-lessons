@@ -9,7 +9,10 @@ capabilities.
 
 import json
 import os
+import platform
+import subprocess
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
 from typing import Deque, Iterator, List, Optional
 
@@ -17,6 +20,33 @@ try:
     from core.tui.models import DebugEvent
 except ImportError:
     from .models import DebugEvent
+
+
+@lru_cache(maxsize=1)
+def _get_time_format() -> str:
+    """Get the appropriate time format string based on system preferences.
+
+    On macOS: checks AppleICUForce24HourTime preference
+      - 1 = 24h format → %H:%M:%S
+      - 0 or unset = 12h format → %r (with AM/PM)
+    On other platforms: uses %X (locale-dependent)
+    """
+    if platform.system() != "Darwin":
+        return "%X"  # Trust locale on Linux/other
+
+    try:
+        result = subprocess.run(
+            ["defaults", "read", "NSGlobalDomain", "AppleICUForce24HourTime"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode == 0 and result.stdout.strip() == "1":
+            return "%H:%M:%S"  # User prefers 24h
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    return "%r"  # Default to 12h AM/PM on macOS
 
 # ANSI color codes for terminal output
 COLORS = {
@@ -35,6 +65,23 @@ COLORS = {
 }
 
 
+def _format_event_time(event: DebugEvent) -> str:
+    """Format event timestamp using system time format preference, in local timezone."""
+    from datetime import timezone
+    dt = event.timestamp_dt
+    if dt is None:
+        # Fallback to raw timestamp extraction
+        ts = event.timestamp
+        if "T" in ts:
+            return ts.split("T")[1][:8]
+        return ts[:8] if len(ts) >= 8 else ts
+    # Ensure timezone-aware and convert to local
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local_dt = dt.astimezone()
+    return local_dt.strftime(_get_time_format())
+
+
 def format_event_line(event: DebugEvent, color: bool = True) -> str:
     """
     Format an event as a single colorized line for tail output.
@@ -46,12 +93,7 @@ def format_event_line(event: DebugEvent, color: bool = True) -> str:
     Returns:
         Formatted string for terminal display
     """
-    # Extract timestamp (just time portion)
-    ts = event.timestamp
-    if "T" in ts:
-        time_part = ts.split("T")[1][:8]  # HH:MM:SS
-    else:
-        time_part = ts[:8] if len(ts) >= 8 else ts
+    time_part = _format_event_time(event)
 
     # Get color codes
     event_color = COLORS.get(event.event, "") if color else ""

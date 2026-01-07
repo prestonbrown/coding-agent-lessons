@@ -64,7 +64,7 @@ log_phase() {
     else
         PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
     fi
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
         PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase inject "$phase" "$duration" 2>/dev/null &
     fi
 }
@@ -72,7 +72,7 @@ log_phase() {
 log_hook_end() {
     local end_ms=$(get_ms)
     local total_ms=$((end_ms - HOOK_START_MS))
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
         # Close the JSON object
         local phases_json="${PHASE_TIMES_JSON}}"
         PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end inject "$total_ms" --phases "$phases_json" 2>/dev/null &
@@ -167,6 +167,12 @@ main() {
 
     local input=$(cat)
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
+
+    # Extract session_id from Claude Code hook input for event correlation
+    local claude_session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+    if [[ -n "$claude_session_id" ]]; then
+        export CLAUDE_RECALL_SESSION="$claude_session_id"
+    fi
 
     # Generate lessons context (with timing)
     local phase_start=$(get_ms)
