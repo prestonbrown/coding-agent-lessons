@@ -10,6 +10,7 @@ Provides real-time monitoring of lessons system activity with:
 - Session inspector for event correlation
 """
 
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -305,8 +306,8 @@ class RecallMonitorApp(App):
 
         self._update_subtitle()
 
-        # Start auto-refresh timer (2 seconds)
-        self._refresh_timer = self.set_interval(2.0, self._auto_refresh)
+        # Start auto-refresh timer (2 seconds) - must use sync callback
+        self._refresh_timer = self.set_interval(2.0, self._on_refresh_timer)
 
     def _load_events(self) -> None:
         """Load and display events in the log."""
@@ -325,24 +326,26 @@ class RecallMonitorApp(App):
 
         self._last_event_count = self.log_reader.buffer_size
 
-    @work(exclusive=True)
-    async def _auto_refresh(self) -> None:
-        """Auto-refresh callback - updates event log if not paused."""
-        # Always update subtitle (shows time)
+    def _on_refresh_timer(self) -> None:
+        """Sync timer callback - updates subtitle and triggers async refresh."""
         self._update_subtitle()
+        if not self._paused:
+            self._refresh_events()
 
-        if self._paused:
-            return
-
-        # Check for new events - run blocking I/O in thread
-        new_count = await self.run_in_thread(self.log_reader.load_buffer)
+    @work(exclusive=True)
+    async def _refresh_events(self) -> None:
+        """Async worker to check for and display new events."""
+        new_count = await asyncio.to_thread(self.log_reader.load_buffer)
         if new_count > 0:
             self._append_new_events(new_count)
 
     def _append_new_events(self, count: int) -> None:
-        """Append newly loaded events to the log."""
+        """Append only the new events (last 'count' from buffer)."""
         event_log = self.query_one("#event-log", RichLog)
-        events = self.log_reader.read_recent(count)
+
+        # Access buffer directly - don't use read_recent() which calls load_buffer() again
+        buffer = list(self.log_reader._buffer)
+        events = buffer[-count:] if count <= len(buffer) else buffer
 
         # Filter if needed
         if self.project_filter:
