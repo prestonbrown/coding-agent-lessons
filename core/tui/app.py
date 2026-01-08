@@ -11,6 +11,7 @@ Provides real-time monitoring of lessons system activity with:
 """
 
 import asyncio
+import os
 import platform
 import subprocess
 import sys
@@ -71,11 +72,13 @@ try:
     from core.tui.models import DebugEvent
     from core.tui.state_reader import StateReader
     from core.tui.stats import StatsAggregator
+    from core.tui.transcript_reader import TranscriptReader, TranscriptSummary
 except ImportError:
     from .log_reader import LogReader, format_event_line
     from .models import DebugEvent
     from .state_reader import StateReader
     from .stats import StatsAggregator
+    from .transcript_reader import TranscriptReader, TranscriptSummary
 
 
 # Textual Rich markup colors for event types
@@ -334,7 +337,7 @@ class RecallMonitorApp(App):
         Binding("f5", "switch_tab('charts')", "Charts"),
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "refresh", "Refresh"),
-        Binding("a", "toggle_all_sessions", "All Sessions"),
+        Binding("a", "toggle_all", "All"),
         Binding("ctrl+c", "copy_session", "Copy", priority=True),
     ]
 
@@ -362,7 +365,12 @@ class RecallMonitorApp(App):
         self._session_data: dict = {}  # Raw data by session_id for sorting
         self._session_sort_column: Optional[str] = None
         self._session_sort_reverse: bool = False
-        self._show_all_sessions: bool = False  # False = only "full" sessions with session_start
+        # Transcript reader for session tab
+        self.transcript_reader = TranscriptReader()
+        self._current_project = os.environ.get("PROJECT_DIR", os.getcwd())
+        # Unified toggle: False = current project, non-empty sessions
+        #                 True = all projects, all sessions (including empty)
+        self._show_all: bool = False
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -389,7 +397,7 @@ class RecallMonitorApp(App):
                     Static("Sessions", classes="section-title"),
                     DataTable(id="session-list"),
                     Static("Session Events", classes="section-title"),
-                    RichLog(id="session-events", highlight=True, markup=True),
+                    RichLog(id="session-events", highlight=True, markup=True, wrap=True, auto_scroll=False),
                 )
 
             with TabPane("Charts", id="charts"):
@@ -624,58 +632,43 @@ class RecallMonitorApp(App):
         # Add columns with keys for sorting
         session_table.add_column("Session ID", key="session_id")
         session_table.add_column("Project", key="project")
+        session_table.add_column("Topic", key="topic")
         session_table.add_column("Started", key="started")
         session_table.add_column("Last", key="last_activity")
-        session_table.add_column("Duration", key="duration")
-        session_table.add_column("Status", key="status")
-        session_table.add_column("Events", key="events")
+        session_table.add_column("Tools", key="tools")
         session_table.add_column("Tokens", key="tokens")
-        session_table.add_column("Cites", key="citations")
-        session_table.add_column("Errs", key="errors")
+        session_table.add_column("Msgs", key="messages")
 
         # Clear any existing session data
         self._session_data.clear()
 
-        # Populate with sessions
-        sessions = self.log_reader.get_sessions()[:50]  # Fetch more to allow for filtering
-        added_count = 0
+        # Get sessions from TranscriptReader
+        # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
+        if self._show_all:
+            sessions = self.transcript_reader.list_all_sessions(limit=20, include_empty=True)
+        else:
+            sessions = self.transcript_reader.list_sessions(
+                self._current_project, limit=20, include_empty=False
+            )
 
-        for session_id in sessions:
-            if added_count >= 20:  # Limit display to 20 sessions
-                break
-
-            session_stats = self.stats.compute_session_stats(session_id)
-
-            # Filter: when _show_all_sessions is False, only show "full" sessions
-            # A "full" session has a session_start event
-            if not self._show_all_sessions and not session_stats.get("has_session_start", False):
-                continue
-
-            self._session_data[session_id] = session_stats
-            added_count += 1
+        for summary in sessions:
+            session_id = summary.session_id
+            self._session_data[session_id] = summary
 
             # Format display values
-            errors = session_stats["errors"]
-            error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
-
-            status = _compute_session_status(session_stats["last_event_time"])
-            status_str = (
-                f"[green]{status}[/green]"
-                if status == "Active"
-                else f"[dim]{status}[/dim]"
-            )
+            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+            topic = topic.replace("\n", " ")  # Remove newlines for display
+            total_tools = sum(summary.tool_breakdown.values())
 
             session_table.add_row(
                 session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                (session_stats["project"] or "")[:12],
-                _format_session_time(session_stats["first_event_time"]),
-                _format_session_time(session_stats["last_event_time"]),
-                _format_duration(session_stats["duration_ms"]),
-                status_str,
-                str(session_stats["event_count"]),
-                _format_tokens(session_stats["tokens"]),
-                str(session_stats["citations"]),
-                error_str,
+                summary.project[:12],
+                topic,
+                _format_session_time(summary.start_time),
+                _format_session_time(summary.last_activity),
+                str(total_tools),
+                _format_tokens(summary.total_tokens),
+                str(summary.message_count),
                 key=session_id,
             )
 
@@ -714,35 +707,27 @@ class RecallMonitorApp(App):
         """Sort the session table by the given column."""
         session_table = self.query_one("#session-list", DataTable)
 
-        # Define sort key based on column
+        # Define sort key based on column (using TranscriptSummary)
         def get_sort_value(session_id: str):
-            data = self._session_data.get(session_id, {})
+            summary = self._session_data.get(session_id)
+            if not isinstance(summary, TranscriptSummary):
+                return ""
             if column_key == "session_id":
                 return session_id
             elif column_key == "project":
-                return data.get("project", "")
+                return summary.project
+            elif column_key == "topic":
+                return summary.first_prompt
             elif column_key == "started":
-                return data.get("first_event_time") or datetime.min.replace(
-                    tzinfo=timezone.utc
-                )
+                return summary.start_time
             elif column_key == "last_activity":
-                return data.get("last_event_time") or datetime.min.replace(
-                    tzinfo=timezone.utc
-                )
-            elif column_key == "duration":
-                return data.get("duration_ms", 0)
-            elif column_key == "status":
-                # Sort Active before Idle
-                status = _compute_session_status(data.get("last_event_time"))
-                return 0 if status == "Active" else 1
-            elif column_key == "events":
-                return data.get("event_count", 0)
+                return summary.last_activity
+            elif column_key == "tools":
+                return sum(summary.tool_breakdown.values())
             elif column_key == "tokens":
-                return data.get("tokens", 0)
-            elif column_key == "citations":
-                return data.get("citations", 0)
-            elif column_key == "errors":
-                return data.get("errors", 0)
+                return summary.total_tokens
+            elif column_key == "messages":
+                return summary.message_count
             return ""
 
         # Get sorted session IDs
@@ -755,40 +740,93 @@ class RecallMonitorApp(App):
         # Clear and repopulate table in sorted order
         session_table.clear()
         for session_id in sorted_sessions:
-            session_stats = self._session_data[session_id]
+            summary = self._session_data[session_id]
+            if not isinstance(summary, TranscriptSummary):
+                continue
 
-            errors = session_stats["errors"]
-            error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
-
-            status = _compute_session_status(session_stats["last_event_time"])
-            status_str = (
-                f"[green]{status}[/green]"
-                if status == "Active"
-                else f"[dim]{status}[/dim]"
-            )
+            # Format display values
+            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+            topic = topic.replace("\n", " ")  # Remove newlines for display
+            total_tools = sum(summary.tool_breakdown.values())
 
             session_table.add_row(
                 session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                (session_stats["project"] or "")[:12],
-                _format_session_time(session_stats["first_event_time"]),
-                _format_session_time(session_stats["last_event_time"]),
-                _format_duration(session_stats["duration_ms"]),
-                status_str,
-                str(session_stats["event_count"]),
-                _format_tokens(session_stats["tokens"]),
-                str(session_stats["citations"]),
-                error_str,
+                summary.project[:12],
+                topic,
+                _format_session_time(summary.start_time),
+                _format_session_time(summary.last_activity),
+                str(total_tools),
+                _format_tokens(summary.total_tokens),
+                str(summary.message_count),
                 key=session_id,
             )
 
     def _show_session_events(self, session_id: str) -> None:
-        """Display events for a selected session."""
+        """Display transcript timeline for a selected session."""
         session_log = self.query_one("#session-events", RichLog)
         session_log.clear()
 
-        events = self.log_reader.filter_by_session(session_id)
-        for event in events:
-            session_log.write(format_event_rich(event))
+        # Get the summary from cached data
+        summary = self._session_data.get(session_id)
+        if summary is None or not isinstance(summary, TranscriptSummary):
+            session_log.write("[dim]No transcript data available[/dim]")
+            return
+
+        # Load full transcript
+        messages = self.transcript_reader.load_session(summary.path)
+        if not messages:
+            session_log.write("[dim]Empty transcript[/dim]")
+            return
+
+        # Header: Topic (full first prompt)
+        topic = summary.first_prompt.replace("\n", " ")
+        session_log.write(f"[bold]Topic:[/bold] {topic}")
+        session_log.write("")
+
+        # Tool breakdown line
+        if summary.tool_breakdown:
+            tool_parts = [f"{name}({count})" for name, count in sorted(summary.tool_breakdown.items(), key=lambda x: -x[1])]
+            session_log.write(f"[bold]Tools:[/bold] {' '.join(tool_parts)}")
+            session_log.write("")
+
+        # Lesson citations if any
+        if summary.lesson_citations:
+            citations_str = ", ".join(summary.lesson_citations)
+            session_log.write(f"[bold]Lessons cited:[/bold] {citations_str}")
+            session_log.write("")
+
+        # Separator
+        session_log.write("[dim]" + "-" * 60 + "[/dim]")
+        session_log.write("")
+
+        # Chronological messages with timestamps
+        time_fmt = _get_time_format()
+        for msg in messages:
+            # Convert to local time for display
+            local_dt = msg.timestamp.astimezone()
+            time_str = local_dt.strftime(time_fmt)
+
+            if msg.type == "user":
+                # USER: [HH:MM:SS] USER    "First 80 chars of content..."
+                content = msg.content[:80].replace("\n", " ")
+                if len(msg.content) > 80:
+                    content += "..."
+                session_log.write(f"[cyan][{time_str}] USER    \"{content}\"[/cyan]")
+
+            elif msg.type == "assistant":
+                if msg.tools_used:
+                    # ASSISTANT with tools: [HH:MM:SS] TOOL    Read, Bash, Edit
+                    tools_str = ", ".join(msg.tools_used)
+                    session_log.write(f"[yellow][{time_str}] TOOL    {tools_str}[/yellow]")
+                else:
+                    # ASSISTANT text only: [HH:MM:SS] CLAUDE  "First 80 chars of response..."
+                    content = msg.content[:80].replace("\n", " ")
+                    if len(msg.content) > 80:
+                        content += "..."
+                    session_log.write(f"[green][{time_str}] CLAUDE  \"{content}\"[/green]")
+
+        # Defer scroll to after refresh so content is fully rendered
+        self.call_after_refresh(session_log.scroll_home)
 
     def _update_charts(self) -> None:
         """Update charts panel with sparklines and plotext charts."""
@@ -937,11 +975,13 @@ class RecallMonitorApp(App):
         self._update_charts()
         self.notify("Refreshed")
 
-    def action_toggle_all_sessions(self) -> None:
-        """Toggle between showing all sessions vs only full sessions."""
-        self._show_all_sessions = not self._show_all_sessions
-        mode = "all" if self._show_all_sessions else "full"
-        self.notify(f"Showing {mode} sessions")
+    def action_toggle_all(self) -> None:
+        """Toggle between current project (non-empty) and all projects (all sessions)."""
+        self._show_all = not self._show_all
+        if self._show_all:
+            self.notify("Showing all projects, all sessions")
+        else:
+            self.notify("Showing current project, non-empty sessions")
         self._refresh_session_list()
 
     def action_copy_session(self) -> None:
@@ -974,15 +1014,19 @@ class RecallMonitorApp(App):
             self.notify("Session data not found", severity="error")
             return
 
-        # Format session data for clipboard
-        data = self._session_data[session_id]
-        text = (
-            f"Session: {session_id} | "
-            f"Project: {data.get('project', '')} | "
-            f"Events: {data.get('event_count', 0)} | "
-            f"Tokens: {data.get('tokens', 0)} | "
-            f"Started: {_format_session_time(data.get('first_event_time'))}"
-        )
+        # Format session data for clipboard (using TranscriptSummary)
+        summary = self._session_data[session_id]
+        if isinstance(summary, TranscriptSummary):
+            text = (
+                f"Session: {session_id} | "
+                f"Project: {summary.project} | "
+                f"Messages: {summary.message_count} | "
+                f"Tokens: {summary.total_tokens} | "
+                f"Started: {_format_session_time(summary.start_time)}"
+            )
+        else:
+            # Fallback for old format
+            text = f"Session: {session_id}"
 
         # Copy to clipboard using platform-appropriate command
         try:
@@ -1014,44 +1058,33 @@ class RecallMonitorApp(App):
         session_table.clear()
         self._session_data.clear()
 
-        # Repopulate with sessions using current filter
-        sessions = self.log_reader.get_sessions()[:50]
-        added_count = 0
-
-        for session_id in sessions:
-            if added_count >= 20:
-                break
-
-            session_stats = self.stats.compute_session_stats(session_id)
-
-            # Apply filter based on _show_all_sessions
-            if not self._show_all_sessions and not session_stats.get("has_session_start", False):
-                continue
-
-            self._session_data[session_id] = session_stats
-            added_count += 1
-
-            errors = session_stats["errors"]
-            error_str = f"[red]{errors}[/red]" if errors > 0 else "0"
-
-            status = _compute_session_status(session_stats["last_event_time"])
-            status_str = (
-                f"[green]{status}[/green]"
-                if status == "Active"
-                else f"[dim]{status}[/dim]"
+        # Get sessions from TranscriptReader
+        # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
+        if self._show_all:
+            sessions = self.transcript_reader.list_all_sessions(limit=20, include_empty=True)
+        else:
+            sessions = self.transcript_reader.list_sessions(
+                self._current_project, limit=20, include_empty=False
             )
+
+        for summary in sessions:
+            session_id = summary.session_id
+            self._session_data[session_id] = summary
+
+            # Format display values
+            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+            topic = topic.replace("\n", " ")  # Remove newlines for display
+            total_tools = sum(summary.tool_breakdown.values())
 
             session_table.add_row(
                 session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                (session_stats["project"] or "")[:12],
-                _format_session_time(session_stats["first_event_time"]),
-                _format_session_time(session_stats["last_event_time"]),
-                _format_duration(session_stats["duration_ms"]),
-                status_str,
-                str(session_stats["event_count"]),
-                _format_tokens(session_stats["tokens"]),
-                str(session_stats["citations"]),
-                error_str,
+                summary.project[:12],
+                topic,
+                _format_session_time(summary.start_time),
+                _format_session_time(summary.last_activity),
+                str(total_tools),
+                _format_tokens(summary.total_tokens),
+                str(summary.message_count),
                 key=session_id,
             )
 

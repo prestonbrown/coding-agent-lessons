@@ -1,0 +1,428 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Transcript reader for Claude session transcripts.
+
+Reads and parses Claude session transcripts from ~/.claude/projects/*/,
+providing structured access to session messages, tool usage, and statistics.
+"""
+
+import json
+import os
+import re
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional
+
+CITATION_PATTERN = re.compile(r'\[([LS]\d{3})\]')
+
+
+@dataclass
+class TranscriptMessage:
+    """
+    A single message from a Claude session transcript.
+
+    Attributes:
+        type: Message type ("user" or "assistant")
+        timestamp: Message timestamp as datetime
+        content: User prompt text or assistant text content
+        tools_used: List of tool names used in this message (empty for user)
+        token_usage: Output tokens from assistant message usage.output_tokens
+    """
+
+    type: str  # "user" | "assistant"
+    timestamp: datetime
+    content: str  # User prompt text, or text from assistant
+    tools_used: List[str] = field(default_factory=list)
+    token_usage: Optional[int] = None
+
+
+@dataclass
+class TranscriptSummary:
+    """
+    Summary of a Claude session transcript.
+
+    Attributes:
+        session_id: Session identifier (UUID)
+        path: Path to the transcript JSONL file
+        project: Project name (last part of encoded path)
+        first_prompt: First user message content (truncated to ~200 chars)
+        message_count: Total number of user and assistant messages
+        tool_breakdown: Dict mapping tool names to usage counts
+        total_tokens: Total output tokens from assistant messages
+        start_time: Timestamp of first message
+        last_activity: Timestamp of last message
+    """
+
+    session_id: str
+    path: Path
+    project: str
+    first_prompt: str
+    message_count: int
+    tool_breakdown: Dict[str, int] = field(default_factory=dict)
+    total_tokens: int = 0
+    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    lesson_citations: List[str] = field(default_factory=list)
+
+
+def _parse_timestamp(ts_str: str) -> datetime:
+    """Parse ISO timestamp string to datetime with timezone."""
+    if not ts_str:
+        return datetime.now(timezone.utc)
+    try:
+        # Handle Z suffix for UTC
+        ts_str = ts_str.replace("Z", "+00:00")
+        return datetime.fromisoformat(ts_str)
+    except ValueError:
+        return datetime.now(timezone.utc)
+
+
+def _extract_text_content(content) -> str:
+    """Extract text content from message content field."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text from content array
+        texts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                texts.append(item.get("text", ""))
+        return "\n".join(texts)
+    return ""
+
+
+def _extract_tools(content) -> List[str]:
+    """Extract tool names from assistant message content."""
+    if not isinstance(content, list):
+        return []
+    tools = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "tool_use":
+            name = item.get("name")
+            if name:
+                tools.append(name)
+    return tools
+
+
+class TranscriptReader:
+    """
+    Reader for Claude session transcripts.
+
+    Reads transcripts from ~/.claude/projects/*/ directories.
+    Each project directory is named with an encoded path, and contains
+    JSONL files for each session.
+    """
+
+    def __init__(self, claude_home: Optional[Path] = None):
+        """
+        Initialize with claude home directory.
+
+        Args:
+            claude_home: Path to Claude home directory (default ~/.claude)
+        """
+        if claude_home is None:
+            claude_home = Path.home() / ".claude"
+        self.claude_home = Path(claude_home)
+        self.projects_dir = self.claude_home / "projects"
+
+    def encode_project_path(self, project_path: str) -> str:
+        """
+        Encode project path to match Claude's directory naming.
+
+        Converts absolute path to directory name format:
+        - /Users/test/code/myproject -> -Users-test-code-myproject
+        - /Users/test/.local/state -> -Users-test--local-state
+
+        Args:
+            project_path: Absolute project path
+
+        Returns:
+            Encoded directory name
+        """
+        # Replace slashes with dash first, then dots with dash
+        # This results in /. becoming -- (one from /, one from .)
+        encoded = project_path.replace("/", "-").replace(".", "-")
+        # Ensure leading dash
+        if encoded.startswith("-"):
+            return encoded
+        return "-" + encoded
+
+    def get_project_dir(self, project_path: str) -> Path:
+        """
+        Get the Claude project directory for a given project path.
+
+        Args:
+            project_path: Absolute project path
+
+        Returns:
+            Path to the Claude project directory
+        """
+        encoded = self.encode_project_path(project_path)
+        return self.projects_dir / encoded
+
+    def _get_project_name(self, encoded_path: str) -> str:
+        """Extract project name from encoded path (last component)."""
+        # Decode: replace -- back to ., then split by -
+        # The last non-empty segment is the project name
+        parts = encoded_path.split("-")
+        # Filter empty strings and get last part
+        non_empty = [p for p in parts if p]
+        if non_empty:
+            return non_empty[-1]
+        return encoded_path
+
+    def _load_session_summary(self, session_path: Path, project_name: str) -> Optional[TranscriptSummary]:
+        """Load a session and return its summary."""
+        if not session_path.exists():
+            return None
+
+        session_id = session_path.stem
+        first_prompt = ""
+        message_count = 0
+        tool_breakdown: Dict[str, int] = defaultdict(int)
+        total_tokens = 0
+        start_time: Optional[datetime] = None
+        last_activity: Optional[datetime] = None
+        citations: set = set()
+
+        try:
+            with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    msg_type = data.get("type")
+                    if msg_type not in ("user", "assistant"):
+                        continue
+
+                    message_count += 1
+
+                    # Parse timestamp
+                    ts = _parse_timestamp(data.get("timestamp", ""))
+                    if start_time is None:
+                        start_time = ts
+                    last_activity = ts
+
+                    message = data.get("message", {})
+
+                    if msg_type == "user":
+                        # Capture first prompt
+                        if not first_prompt:
+                            content = message.get("content", "")
+                            if isinstance(content, str):
+                                first_prompt = content[:200]
+                            elif isinstance(content, list):
+                                first_prompt = _extract_text_content(content)[:200]
+
+                    elif msg_type == "assistant":
+                        # Extract tool usage
+                        content = message.get("content", [])
+                        for tool in _extract_tools(content):
+                            tool_breakdown[tool] += 1
+
+                        # Extract token usage
+                        usage = message.get("usage", {})
+                        output_tokens = usage.get("output_tokens", 0)
+                        if output_tokens:
+                            total_tokens += output_tokens
+
+                        # Extract lesson citations from assistant messages
+                        text_content = _extract_text_content(content)
+                        found_citations = CITATION_PATTERN.findall(text_content)
+                        citations.update(found_citations)
+
+        except OSError:
+            return None
+
+        if start_time is None:
+            # Use file mtime as fallback for sessions with no user/assistant messages
+            try:
+                mtime = session_path.stat().st_mtime
+                start_time = datetime.fromtimestamp(mtime, tz=timezone.utc)
+            except OSError:
+                start_time = datetime.now(timezone.utc)
+        if last_activity is None:
+            last_activity = start_time
+
+        return TranscriptSummary(
+            session_id=session_id,
+            path=session_path,
+            project=project_name,
+            first_prompt=first_prompt,
+            message_count=message_count,
+            tool_breakdown=dict(tool_breakdown),
+            total_tokens=total_tokens,
+            start_time=start_time,
+            last_activity=last_activity,
+            lesson_citations=sorted(citations),
+        )
+
+    def list_sessions(
+        self, project_path: str, limit: int = 50, include_empty: bool = False
+    ) -> List[TranscriptSummary]:
+        """
+        List sessions for a project, sorted by most recent first.
+
+        Args:
+            project_path: Absolute project path
+            limit: Maximum number of sessions to return (default 50)
+            include_empty: If False (default), filter out sessions with 0 messages
+
+        Returns:
+            List of TranscriptSummary objects, empty if project doesn't exist
+        """
+        project_dir = self.get_project_dir(project_path)
+        if not project_dir.exists():
+            return []
+
+        project_name = self._get_project_name(project_dir.name)
+        sessions = []
+
+        # Find all JSONL files (skip symlinks for security)
+        for session_file in project_dir.glob("*.jsonl"):
+            if session_file.is_symlink():
+                continue
+            summary = self._load_session_summary(session_file, project_name)
+            if summary:
+                # Filter out empty sessions unless include_empty is True
+                if include_empty or summary.message_count > 0:
+                    sessions.append(summary)
+
+        # Sort by last_activity descending
+        sessions.sort(key=lambda s: s.last_activity, reverse=True)
+
+        return sessions[:limit]
+
+    def list_all_sessions(
+        self, limit: int = 50, include_empty: bool = False
+    ) -> List[TranscriptSummary]:
+        """
+        List sessions from ALL projects, sorted by most recent first.
+
+        Args:
+            limit: Maximum number of sessions to return (default 50)
+            include_empty: If False (default), filter out sessions with 0 messages
+
+        Returns:
+            List of TranscriptSummary objects from all projects
+        """
+        if not self.projects_dir.exists():
+            return []
+
+        sessions = []
+
+        # Iterate through all project directories (skip symlinks for security)
+        for project_dir in self.projects_dir.iterdir():
+            if not project_dir.is_dir() or project_dir.is_symlink():
+                continue
+
+            project_name = self._get_project_name(project_dir.name)
+
+            # Find all JSONL files in this project (skip symlinks for security)
+            for session_file in project_dir.glob("*.jsonl"):
+                if session_file.is_symlink():
+                    continue
+                summary = self._load_session_summary(session_file, project_name)
+                if summary:
+                    # Filter out empty sessions unless include_empty is True
+                    if include_empty or summary.message_count > 0:
+                        sessions.append(summary)
+
+        # Sort by last_activity descending
+        sessions.sort(key=lambda s: s.last_activity, reverse=True)
+
+        return sessions[:limit]
+
+    def load_session(
+        self, session_path: Path, max_messages: int = 5000
+    ) -> List[TranscriptMessage]:
+        """
+        Load full transcript, returning user and assistant messages.
+
+        Skips file-history-snapshot and other non-message types.
+
+        Args:
+            session_path: Path to the session JSONL file
+            max_messages: Maximum messages to load (default 5000, prevents OOM)
+
+        Returns:
+            List of TranscriptMessage objects in chronological order
+        """
+        # Security: reject symlinks and paths outside projects directory
+        if session_path.is_symlink():
+            return []
+        try:
+            resolved = session_path.resolve()
+            if not str(resolved).startswith(str(self.projects_dir.resolve())):
+                return []  # Path outside allowed directory
+        except (OSError, ValueError):
+            return []
+
+        if not session_path.exists():
+            return []
+
+        messages = []
+
+        try:
+            with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if len(messages) >= max_messages:
+                        break  # Prevent memory exhaustion
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    msg_type = data.get("type")
+                    if msg_type not in ("user", "assistant"):
+                        continue
+
+                    # Parse timestamp
+                    ts = _parse_timestamp(data.get("timestamp", ""))
+
+                    message = data.get("message", {})
+                    content_raw = message.get("content", "")
+
+                    if msg_type == "user":
+                        content = _extract_text_content(content_raw)
+                        messages.append(TranscriptMessage(
+                            type="user",
+                            timestamp=ts,
+                            content=content,
+                            tools_used=[],
+                            token_usage=None,
+                        ))
+
+                    elif msg_type == "assistant":
+                        content = _extract_text_content(content_raw)
+                        tools = _extract_tools(content_raw)
+
+                        # Extract token usage
+                        usage = message.get("usage", {})
+                        output_tokens = usage.get("output_tokens")
+
+                        messages.append(TranscriptMessage(
+                            type="assistant",
+                            timestamp=ts,
+                            content=content,
+                            tools_used=tools,
+                            token_usage=output_tokens,
+                        ))
+
+        except OSError:
+            return []
+
+        return messages
