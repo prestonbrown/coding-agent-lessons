@@ -103,7 +103,7 @@ log_debug "post-exitplanmode: creating handoff from plan '$title'"
 
 # Create handoff with phase=implementing and capture output
 if [[ -f "$PYTHON_MANAGER" ]]; then
-    output=$(PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" handoff add "$title" --phase implementing 2>&1) || {
+    output=$(PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" handoff add "$title" --phase implementing --files "$plan_file" 2>&1) || {
         log_debug "post-exitplanmode: failed to create handoff"
         exit 0
     }

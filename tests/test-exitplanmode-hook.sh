@@ -267,6 +267,17 @@ test_disabled_does_nothing() {
     ! grep -q "Should Not Create" "$TEST_DIR/project/.claude-recall/HANDOFFS.md"
 }
 
+test_handoff_includes_plan_file_path() {
+    create_plan "Plan File Test"
+
+    run_hook > /dev/null
+
+    # Handoff should include the plan file path in refs
+    assert_file_contains "$TEST_DIR/project/.claude-recall/HANDOFFS.md" \
+        ".claude/plans/" \
+        "Handoff should include plan file path in refs"
+}
+
 # =============================================================================
 # Run Tests
 # =============================================================================
@@ -288,6 +299,7 @@ run_test test_extracts_title_without_plan_prefix
 run_test test_extracts_title_without_prefix
 run_test test_handoff_has_implementing_phase
 run_test test_disabled_does_nothing
+run_test test_handoff_includes_plan_file_path
 
 echo ""
 echo "========================================"
