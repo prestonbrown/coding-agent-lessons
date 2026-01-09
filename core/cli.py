@@ -268,6 +268,29 @@ def main():
     watch_parser.add_argument("--tail", action="store_true", help="Simple colorized tail mode (no TUI)")
     watch_parser.add_argument("--lines", "-n", type=int, default=50, help="Number of lines for tail/summary")
 
+    # Session commands for sub-agent detection and linking
+    session_parser = subparsers.add_parser("session", help="Session management commands")
+    session_subparsers = session_parser.add_subparsers(dest="session_command")
+
+    # session detect-origin <session_id>
+    detect_origin_parser = session_subparsers.add_parser(
+        "detect-origin", help="Detect session type from first prompt"
+    )
+    detect_origin_parser.add_argument("session_id", help="Claude session ID")
+
+    # session find-parent <session_id>
+    find_parent_parser = session_subparsers.add_parser(
+        "find-parent", help="Find parent session by temporal overlap"
+    )
+    find_parent_parser.add_argument("session_id", help="Claude session ID")
+
+    # session link <session_id> [--handoff <id>]
+    link_parser = session_subparsers.add_parser(
+        "link", help="Link session with origin/parent detection"
+    )
+    link_parser.add_argument("session_id", help="Claude session ID")
+    link_parser.add_argument("--handoff", help="Handoff ID to link to")
+
     # Debug commands for logging from bash hooks
     debug_parser = subparsers.add_parser("debug", help="Debug logging commands")
     debug_subparsers = debug_parser.add_subparsers(dest="debug_command")
@@ -670,6 +693,99 @@ def main():
                         sys.exit(1)
                 app = RecallMonitorApp(project_filter=args.project)
                 app.run()
+
+        elif args.command == "session":
+            if not args.session_command:
+                session_parser.print_help()
+                sys.exit(1)
+
+            # Import transcript reader for session operations
+            try:
+                from core.tui.transcript_reader import (
+                    TranscriptReader, detect_origin as _detect_origin
+                )
+            except ImportError:
+                from tui.transcript_reader import (
+                    TranscriptReader, detect_origin as _detect_origin
+                )
+
+            if args.session_command == "detect-origin":
+                # Find the session transcript and detect origin from first prompt
+                reader = TranscriptReader()
+                sessions = reader.list_all_sessions(limit=500)
+                session = None
+                for s in sessions:
+                    if s.session_id == args.session_id:
+                        session = s
+                        break
+                if session is None:
+                    print("Unknown", file=sys.stdout)
+                else:
+                    print(session.origin)
+
+            elif args.session_command == "find-parent":
+                # Find parent session by temporal overlap
+                reader = TranscriptReader()
+                sessions = reader.list_all_sessions(limit=500)
+                # Find our session
+                target = None
+                for s in sessions:
+                    if s.session_id == args.session_id:
+                        target = s
+                        break
+                if target is None or target.origin == "User":
+                    # Not found or already a User session (no parent)
+                    print("")
+                else:
+                    # Find User sessions that were active when this started
+                    user_sessions = [s for s in sessions if s.origin == "User"]
+                    parent_candidates = []
+                    for parent in user_sessions:
+                        if parent.start_time < target.start_time < parent.last_activity:
+                            parent_candidates.append(parent)
+                    if parent_candidates:
+                        # Prefer most recently started parent
+                        best = max(parent_candidates, key=lambda p: p.start_time)
+                        print(best.session_id)
+                    else:
+                        print("")
+
+            elif args.session_command == "link":
+                # Link session with origin/parent detection and store in session-handoffs.json
+                reader = TranscriptReader()
+                sessions = reader.list_all_sessions(limit=500)
+                session = None
+                for s in sessions:
+                    if s.session_id == args.session_id:
+                        session = s
+                        break
+
+                if session is None:
+                    print(f"Error: Session {args.session_id} not found", file=sys.stderr)
+                    sys.exit(1)
+
+                origin = session.origin
+                parent_id = None
+
+                # Find parent if this is a sub-agent
+                if origin != "User":
+                    user_sessions = [s for s in sessions if s.origin == "User"]
+                    for parent in user_sessions:
+                        if parent.start_time < session.start_time < parent.last_activity:
+                            parent_id = parent.session_id
+                            break
+
+                # Store in session-handoffs.json with extended schema
+                handoff_id = args.handoff
+                manager.handoff_set_session_extended(
+                    session_id=args.session_id,
+                    handoff_id=handoff_id,
+                    origin=origin,
+                    parent_session_id=parent_id,
+                    is_sub_agent=(origin != "User"),
+                )
+                result = {"origin": origin, "parent": parent_id, "handoff": handoff_id}
+                print(json_module.dumps(result))
 
         elif args.command == "debug":
             try:

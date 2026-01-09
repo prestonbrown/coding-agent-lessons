@@ -334,8 +334,20 @@ process_handoffs() {
     local transcript_path="$1"
     local project_root="$2"
     local last_timestamp="$3"
+    local session_id="$4"
     local processed_count=0
     local last_handoff_id=""  # Track last created handoff for LAST reference
+
+    # Detect session origin to prevent sub-agents from creating handoffs
+    # Sub-agents (Explore, Plan, General, System) can only UPDATE existing handoffs
+    local session_origin="User"
+    if [[ -n "$session_id" && -f "$PYTHON_MANAGER" ]]; then
+        session_origin=$(PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" session detect-origin "$session_id" 2>/dev/null || echo "User")
+    fi
+    local is_sub_agent=false
+    if [[ "$session_origin" == "Explore" || "$session_origin" == "Plan" || "$session_origin" == "General" || "$session_origin" == "System" ]]; then
+        is_sub_agent=true
+    fi
 
     # Extract handoff patterns from assistant messages
     # Also match PLAN MODE: pattern for plan mode integration
@@ -361,7 +373,14 @@ process_handoffs() {
 
         # Pattern 1: HANDOFF: <title> [- <description>] -> add new handoff
         # Use -- to terminate options and prevent injection via crafted titles
+        # NOTE: Sub-agents (Explore, Plan, General, System) are blocked from creating handoffs
         if [[ "$line" =~ ^HANDOFF:\ (.+)$ ]]; then
+            # Block sub-agents from creating handoffs - they should only UPDATE
+            if [[ "$is_sub_agent" == true ]]; then
+                echo "[stop-hook] Blocked HANDOFF: from $session_origin sub-agent (use parent session)" >&2
+                continue
+            fi
+
             local full_match="${BASH_REMATCH[1]}"
             local title=""
             local desc=""
@@ -393,7 +412,14 @@ process_handoffs() {
             fi
 
         # Pattern 1b: PLAN MODE: <title> -> add handoff with plan mode defaults
+        # NOTE: Sub-agents are blocked from creating handoffs via PLAN MODE
         elif [[ "$line" =~ ^PLAN\ MODE:\ (.+)$ ]]; then
+            # Block sub-agents from creating handoffs - they should only UPDATE
+            if [[ "$is_sub_agent" == true ]]; then
+                echo "[stop-hook] Blocked PLAN MODE: from $session_origin sub-agent (use parent session)" >&2
+                continue
+            fi
+
             local title="${BASH_REMATCH[1]}"
             title=$(sanitize_input "$title" 200)
             [[ -z "$title" ]] && continue
@@ -644,8 +670,9 @@ main() {
     log_phase "process_lessons" "$phase_start"
 
     # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
+    # Pass session_id so we can detect sub-agents and block handoff creation
     phase_start=$(get_ms)
-    process_handoffs "$transcript_path" "$project_root" "$last_timestamp"
+    process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
     log_phase "process_handoffs" "$phase_start"
 
     # Capture TodoWrite tool calls and sync to handoffs

@@ -2207,6 +2207,63 @@ Consider extracting lessons about:
             "has_transcript": bool(transcript_path),
         })
 
+    def handoff_set_session_extended(
+        self,
+        session_id: str,
+        handoff_id: Optional[str] = None,
+        origin: str = "User",
+        parent_session_id: Optional[str] = None,
+        is_sub_agent: bool = False,
+        transcript_path: Optional[str] = None,
+    ) -> None:
+        """
+        Store session with extended metadata for sub-agent tracking.
+
+        Called by session link command to store origin type and parent relationship.
+        Sub-agents (origin != User) should not create handoffs but can update them.
+
+        Args:
+            session_id: The Claude session ID
+            handoff_id: Optional handoff ID to link to
+            origin: Session origin type (User, Explore, Plan, General, etc.)
+            parent_session_id: ID of parent session if this is a sub-agent
+            is_sub_agent: True if this session was spawned by another session
+            transcript_path: Optional path to the session transcript file
+        """
+        from datetime import datetime
+
+        data = self._load_session_handoffs()
+        data[session_id] = {
+            "handoff_id": handoff_id,
+            "created": datetime.now().isoformat(),
+            "transcript_path": transcript_path,
+            "origin": origin,
+            "parent_session_id": parent_session_id,
+            "is_sub_agent": is_sub_agent,
+        }
+        self._save_session_handoffs(data)
+
+        logger = get_logger()
+        logger.mutation("set_session_extended", session_id, {
+            "handoff_id": handoff_id,
+            "origin": origin,
+            "parent_session_id": parent_session_id,
+            "is_sub_agent": is_sub_agent,
+        })
+
+    def handoff_get_session_info(self, session_id: str) -> Optional[dict]:
+        """
+        Get session info including origin and parent relationship.
+
+        Args:
+            session_id: The Claude session ID
+
+        Returns:
+            Dict with session metadata or None if not found
+        """
+        data = self._load_session_handoffs()
+        return data.get(session_id)
+
     def handoff_get_by_session(self, session_id: str) -> Optional[str]:
         """
         Get active handoff ID for a session.
