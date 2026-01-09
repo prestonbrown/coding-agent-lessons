@@ -7,7 +7,7 @@ Defines dataclasses for events, statistics, and state summaries.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 
@@ -148,6 +148,14 @@ class LessonSummary:
 
 
 @dataclass
+class TriedStep:
+    """Represents a tried step in a handoff with its outcome."""
+
+    outcome: str  # success, fail, partial
+    description: str
+
+
+@dataclass
 class HandoffSummary:
     """
     Compact summary of a handoff for state overview.
@@ -161,6 +169,13 @@ class HandoffSummary:
         phase: Current phase (research, planning, implementing, review)
         created: Creation date as ISO string (YYYY-MM-DD)
         updated: Last updated date as ISO string (YYYY-MM-DD)
+        project: Project path
+        agent: Agent type (user, explore, general-purpose, plan, review)
+        description: Full description of the handoff
+        tried_steps: List of attempted steps with outcomes
+        next_steps: List of next steps to take
+        refs: List of file:line references
+        checkpoint: Current progress summary
     """
 
     id: str
@@ -169,6 +184,13 @@ class HandoffSummary:
     phase: str
     created: str
     updated: str
+    project: str = ""
+    agent: str = "user"
+    description: str = ""
+    tried_steps: List[TriedStep] = field(default_factory=list)
+    next_steps: List[str] = field(default_factory=list)
+    refs: List[str] = field(default_factory=list)
+    checkpoint: str = ""
 
     @property
     def is_active(self) -> bool:
@@ -179,6 +201,24 @@ class HandoffSummary:
     def is_blocked(self) -> bool:
         """Check if handoff is blocked."""
         return self.status == "blocked"
+
+    @property
+    def age_days(self) -> int:
+        """Calculate age in days since created date."""
+        try:
+            created_date = date.fromisoformat(self.created)
+            return (date.today() - created_date).days
+        except (ValueError, TypeError):
+            return 0
+
+    @property
+    def updated_age_days(self) -> int:
+        """Calculate days since last update."""
+        try:
+            updated_date = date.fromisoformat(self.updated)
+            return (date.today() - updated_date).days
+        except (ValueError, TypeError):
+            return 0
 
 
 @dataclass

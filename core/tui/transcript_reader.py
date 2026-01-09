@@ -19,6 +19,54 @@ from typing import Dict, List, Optional
 CITATION_PATTERN = re.compile(r'\[([LS]\d{3})\]')
 
 
+def detect_origin(first_prompt: str) -> str:
+    """
+    Classify session type based on the first prompt pattern.
+
+    Args:
+        first_prompt: The first user message content
+
+    Returns:
+        One of: "Unknown", "Warmup", "Explore", "Plan", "General", "User"
+    """
+    # Handle unknown/system cases first
+    if not first_prompt or len(first_prompt) < 3:
+        return "Unknown"
+    if "<local-command-caveat>" in first_prompt:
+        return "Unknown"
+
+    # Normalize for case-insensitive matching
+    lower_prompt = first_prompt.lower()
+
+    # Check for warmup sessions (Claude Code pre-warming sub-agents)
+    if lower_prompt.startswith("warmup"):
+        return "Warmup"
+
+    # Check for Explore patterns
+    explore_prefixes = ("explore", "search", "find", "look for", "investigate", "what files")
+    if any(lower_prompt.startswith(prefix) for prefix in explore_prefixes):
+        return "Explore"
+    explore_contains = ("in the codebase", "find where", "locate")
+    if any(phrase in lower_prompt for phrase in explore_contains):
+        return "Explore"
+
+    # Check for Plan patterns
+    plan_prefixes = ("plan", "design", "create a plan", "outline")
+    if any(lower_prompt.startswith(prefix) for prefix in plan_prefixes):
+        return "Plan"
+    plan_contains = ("implementation plan", "approach for")
+    if any(phrase in lower_prompt for phrase in plan_contains):
+        return "Plan"
+
+    # Check for General patterns
+    general_prefixes = ("implement", "fix", "refactor", "review", "update", "add")
+    if any(lower_prompt.startswith(prefix) for prefix in general_prefixes):
+        return "General"
+
+    # Default to User (natural language, conversational)
+    return "User"
+
+
 @dataclass
 class TranscriptMessage:
     """
@@ -54,6 +102,10 @@ class TranscriptSummary:
         total_tokens: Total output tokens from assistant messages
         start_time: Timestamp of first message
         last_activity: Timestamp of last message
+        lesson_citations: List of lesson IDs cited in the session
+        origin: Session type (User, Explore, Plan, General, Unknown)
+        parent_session_id: ID of parent session if this is a sub-agent
+        child_session_ids: IDs of spawned sub-agents
     """
 
     session_id: str
@@ -66,6 +118,9 @@ class TranscriptSummary:
     start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     lesson_citations: List[str] = field(default_factory=list)
+    origin: str = "User"
+    parent_session_id: Optional[str] = None
+    child_session_ids: List[str] = field(default_factory=list)
 
 
 def _parse_timestamp(ts_str: str) -> datetime:
@@ -78,6 +133,47 @@ def _parse_timestamp(ts_str: str) -> datetime:
         return datetime.fromisoformat(ts_str)
     except ValueError:
         return datetime.now(timezone.utc)
+
+
+def _link_parent_child_sessions(sessions: List[TranscriptSummary]) -> None:
+    """
+    Link parent and child sessions based on temporal overlap.
+
+    For each non-User session, find User sessions that were active when this
+    session started (parent.start_time < child.start_time < parent.last_activity).
+    If multiple candidates exist, prefer the most recently started parent.
+
+    Links are bidirectional: child gets parent_session_id set, parent gets
+    child added to child_session_ids.
+
+    Args:
+        sessions: List of sessions to link (modified in place)
+    """
+    # Build lookup for quick access
+    sessions_by_id = {s.session_id: s for s in sessions}
+
+    # Only User sessions can be parents
+    user_sessions = [s for s in sessions if s.origin == "User"]
+
+    # Only non-User sessions can be children
+    child_candidates = [s for s in sessions if s.origin != "User"]
+
+    for child in child_candidates:
+        # Find all User sessions that were active when this child started
+        parent_candidates = []
+        for parent in user_sessions:
+            if parent.start_time < child.start_time < parent.last_activity:
+                parent_candidates.append(parent)
+
+        if not parent_candidates:
+            continue
+
+        # Prefer the most recently started parent (closest temporal match)
+        best_parent = max(parent_candidates, key=lambda p: p.start_time)
+
+        # Link bidirectionally
+        child.parent_session_id = best_parent.session_id
+        best_parent.child_session_ids.append(child.session_id)
 
 
 def _extract_text_content(content) -> str:
@@ -264,6 +360,7 @@ class TranscriptReader:
             start_time=start_time,
             last_activity=last_activity,
             lesson_citations=sorted(citations),
+            origin=detect_origin(first_prompt),
         )
 
     def list_sessions(
@@ -299,6 +396,9 @@ class TranscriptReader:
 
         # Sort by last_activity descending
         sessions.sort(key=lambda s: s.last_activity, reverse=True)
+
+        # Link parent-child relationships before slicing
+        _link_parent_child_sessions(sessions)
 
         return sessions[:limit]
 
@@ -339,6 +439,9 @@ class TranscriptReader:
 
         # Sort by last_activity descending
         sessions.sort(key=lambda s: s.last_activity, reverse=True)
+
+        # Link parent-child relationships before slicing
+        _link_parent_child_sessions(sessions)
 
         return sessions[:limit]
 

@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -27,9 +27,9 @@ LEGACY_HANDOFFS_FILENAME = "APPROACHES.md"
 DECAY_STATE_FILENAME = "decay_state"
 
 try:
-    from core.tui.models import DecayInfo, HandoffSummary, LessonSummary
+    from core.tui.models import DecayInfo, HandoffSummary, LessonSummary, TriedStep
 except ImportError:
-    from .models import DecayInfo, HandoffSummary, LessonSummary
+    from .models import DecayInfo, HandoffSummary, LessonSummary, TriedStep
 
 
 def get_state_dir() -> Path:
@@ -120,16 +120,27 @@ class StateReader:
     )
 
     # Regex patterns for parsing handoffs
+    # Match both legacy format (A001) and new format (hf-xxxxxxx with any alphanumeric)
     HANDOFF_HEADER_PATTERN = re.compile(
-        r"^###\s*\[([A-Z]\d{3}|hf-[0-9a-f]{7})\]\s*(.+)$"
+        r"^###\s*\[([A-Z]\d{3}|hf-\w+)\]\s*(.+)$"
     )
     HANDOFF_STATUS_PATTERN = re.compile(
         r"^\s*-\s*\*\*Status\*\*:\s*(\w+)"
         r"\s*\|\s*\*\*Phase\*\*:\s*([\w-]+)"
+        r"(?:\s*\|\s*\*\*Agent\*\*:\s*([\w-]+))?"
     )
     HANDOFF_DATES_PATTERN = re.compile(
         r"\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
     )
+    HANDOFF_DESCRIPTION_PATTERN = re.compile(r"^\*\*Description\*\*:\s*(.+)$")
+    HANDOFF_TRIED_HEADER_PATTERN = re.compile(r"^\*\*Tried\*\*\s*\(\d+\s*steps?\):")
+    HANDOFF_TRIED_STEP_PATTERN = re.compile(
+        r"^\s*\d+\.\s*\[(success|fail|partial)\]\s*(.+)$"
+    )
+    HANDOFF_NEXT_HEADER_PATTERN = re.compile(r"^\*\*Next\*\*:")
+    HANDOFF_NEXT_STEP_PATTERN = re.compile(r"^\s*-\s*(.+)$")
+    HANDOFF_REFS_PATTERN = re.compile(r"^\*\*Refs\*\*:\s*(.*)$")
+    HANDOFF_CHECKPOINT_PATTERN = re.compile(r"^\*\*Checkpoint\*\*:\s*(.+)$")
 
     def __init__(
         self,
@@ -281,12 +292,15 @@ class StateReader:
 
         return lessons
 
-    def _parse_handoffs_file(self, file_path: Path) -> List[HandoffSummary]:
+    def _parse_handoffs_file(
+        self, file_path: Path, project_path: str = ""
+    ) -> List[HandoffSummary]:
         """
         Parse handoffs from a HANDOFFS.md file.
 
         Args:
             file_path: Path to the handoffs file
+            project_path: Project path to set on each handoff
 
         Returns:
             List of HandoffSummary objects
@@ -315,22 +329,118 @@ class StateReader:
             # Parse status line
             status = "unknown"
             phase = "unknown"
+            agent = "user"
             created = ""
             updated = ""
+            description = ""
+            tried_steps: List[TriedStep] = []
+            next_steps: List[str] = []
+            refs: List[str] = []
+            checkpoint = ""
 
-            if idx + 1 < len(lines):
-                status_match = self.HANDOFF_STATUS_PATTERN.match(lines[idx + 1])
+            # Current parsing section
+            in_tried_section = False
+            in_next_section = False
+
+            # Scan lines until next header or end of file
+            scan_idx = idx + 1
+            while scan_idx < len(lines):
+                line = lines[scan_idx]
+
+                # Check if we hit the next handoff header
+                if self.HANDOFF_HEADER_PATTERN.match(line):
+                    break
+
+                # Parse status line (includes agent)
+                status_match = self.HANDOFF_STATUS_PATTERN.match(line)
                 if status_match:
                     status = status_match.group(1)
                     phase = status_match.group(2)
+                    if status_match.group(3):
+                        agent = status_match.group(3)
+                    in_tried_section = False
+                    in_next_section = False
+                    scan_idx += 1
+                    continue
 
-            # Look for created and updated dates in nearby lines
-            for i in range(idx + 1, min(idx + 4, len(lines))):
-                dates_match = self.HANDOFF_DATES_PATTERN.search(lines[i])
+                # Parse dates
+                dates_match = self.HANDOFF_DATES_PATTERN.search(line)
                 if dates_match:
                     created = dates_match.group(1)
                     updated = dates_match.group(2)
-                    break
+                    scan_idx += 1
+                    continue
+
+                # Parse description
+                desc_match = self.HANDOFF_DESCRIPTION_PATTERN.match(line)
+                if desc_match:
+                    description = desc_match.group(1).strip()
+                    in_tried_section = False
+                    in_next_section = False
+                    scan_idx += 1
+                    continue
+
+                # Parse tried header
+                if self.HANDOFF_TRIED_HEADER_PATTERN.match(line):
+                    in_tried_section = True
+                    in_next_section = False
+                    scan_idx += 1
+                    continue
+
+                # Parse tried step
+                if in_tried_section:
+                    step_match = self.HANDOFF_TRIED_STEP_PATTERN.match(line)
+                    if step_match:
+                        tried_steps.append(TriedStep(
+                            outcome=step_match.group(1),
+                            description=step_match.group(2).strip(),
+                        ))
+                        scan_idx += 1
+                        continue
+                    # Empty line or non-step line ends tried section
+                    if line.strip() and not line.startswith(" "):
+                        in_tried_section = False
+
+                # Parse next header
+                if self.HANDOFF_NEXT_HEADER_PATTERN.match(line):
+                    in_tried_section = False
+                    in_next_section = True
+                    scan_idx += 1
+                    continue
+
+                # Parse next step
+                if in_next_section:
+                    next_match = self.HANDOFF_NEXT_STEP_PATTERN.match(line)
+                    if next_match:
+                        next_steps.append(next_match.group(1).strip())
+                        scan_idx += 1
+                        continue
+                    # Empty line or non-step line ends next section
+                    if line.strip() and not line.startswith(" "):
+                        in_next_section = False
+
+                # Parse refs
+                refs_match = self.HANDOFF_REFS_PATTERN.match(line)
+                if refs_match:
+                    refs_str = refs_match.group(1).strip()
+                    if refs_str:
+                        # Split by comma and clean up
+                        refs = [r.strip() for r in refs_str.split(",") if r.strip()]
+                    in_tried_section = False
+                    in_next_section = False
+                    scan_idx += 1
+                    continue
+
+                # Parse checkpoint
+                chk_match = self.HANDOFF_CHECKPOINT_PATTERN.match(line)
+                if chk_match:
+                    checkpoint = chk_match.group(1).strip()
+                    in_tried_section = False
+                    in_next_section = False
+                    scan_idx += 1
+                    continue
+
+                scan_idx += 1
 
             handoffs.append(HandoffSummary(
                 id=handoff_id,
@@ -339,9 +449,16 @@ class StateReader:
                 phase=phase,
                 created=created,
                 updated=updated,
+                project=project_path,
+                agent=agent,
+                description=description,
+                tried_steps=tried_steps,
+                next_steps=next_steps,
+                refs=refs,
+                checkpoint=checkpoint,
             ))
 
-            idx += 1
+            idx = scan_idx
 
         return handoffs
 
@@ -513,3 +630,97 @@ class StateReader:
                 counts[h.status] += 1
 
         return counts
+
+    def get_all_handoffs(
+        self, project_roots: Optional[List[Path]] = None
+    ) -> List[HandoffSummary]:
+        """
+        Get all handoffs from multiple projects.
+
+        Args:
+            project_roots: List of project root paths to scan.
+                          If None, returns empty list.
+
+        Returns:
+            List of HandoffSummary objects from all projects,
+            with project field populated.
+        """
+        if not project_roots:
+            return []
+
+        all_handoffs = []
+
+        for project_root in project_roots:
+            handoffs_file = self._find_handoffs_file(project_root)
+            if handoffs_file and handoffs_file.exists():
+                handoffs = self._parse_handoffs_file(
+                    handoffs_file, project_path=str(project_root)
+                )
+                all_handoffs.extend(handoffs)
+
+        return all_handoffs
+
+    def get_handoff_stats(self, handoffs: List[HandoffSummary]) -> dict:
+        """
+        Compute statistics from a list of handoffs.
+
+        Args:
+            handoffs: List of HandoffSummary objects
+
+        Returns:
+            Dict with computed statistics:
+            - total_count: Total number of handoffs
+            - active_count: Number of non-completed handoffs
+            - blocked_count: Number of blocked handoffs
+            - stale_count: Number of handoffs not updated in >7 days
+            - by_status: Dict mapping status to count
+            - by_phase: Dict mapping phase to count
+            - age_stats: Dict with min_age_days, max_age_days, avg_age_days
+        """
+        if not handoffs:
+            return {
+                "total_count": 0,
+                "active_count": 0,
+                "blocked_count": 0,
+                "stale_count": 0,
+                "by_status": {},
+                "by_phase": {},
+                "age_stats": {
+                    "min_age_days": 0,
+                    "max_age_days": 0,
+                    "avg_age_days": 0.0,
+                },
+            }
+
+        # Count by status
+        by_status: Dict[str, int] = {}
+        for h in handoffs:
+            by_status[h.status] = by_status.get(h.status, 0) + 1
+
+        # Count by phase
+        by_phase: Dict[str, int] = {}
+        for h in handoffs:
+            by_phase[h.phase] = by_phase.get(h.phase, 0) + 1
+
+        # Age statistics
+        ages = [h.age_days for h in handoffs]
+        min_age = min(ages) if ages else 0
+        max_age = max(ages) if ages else 0
+        avg_age = sum(ages) / len(ages) if ages else 0.0
+
+        # Stale count (7+ days since update)
+        stale_count = sum(1 for h in handoffs if h.updated_age_days >= 7)
+
+        return {
+            "total_count": len(handoffs),
+            "active_count": sum(1 for h in handoffs if h.is_active),
+            "blocked_count": sum(1 for h in handoffs if h.is_blocked),
+            "stale_count": stale_count,
+            "by_status": by_status,
+            "by_phase": by_phase,
+            "age_stats": {
+                "min_age_days": min_age,
+                "max_age_days": max_age,
+                "avg_age_days": avg_age,
+            },
+        }

@@ -296,3 +296,35 @@ SessionDetailModal {
     width: 100%;
     margin-top: 1;
 }
+
+/* Handoffs tab */
+#handoff-list {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+#handoff-details {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+/* Handoff status colors in DataTable */
+.handoff-status-not-started {
+    color: $text-muted;
+}
+
+.handoff-status-in-progress {
+    color: $success;
+}
+
+.handoff-status-blocked {
+    color: $error;
+}
+
+.handoff-status-ready-for-review {
+    color: $warning;
+}
+
+.handoff-status-completed {
+    color: cyan;
+}

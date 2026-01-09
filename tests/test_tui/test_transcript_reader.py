@@ -611,3 +611,586 @@ class TestLessonCitationExtraction:
         # This should fail because lesson_citations field doesn't exist yet
         assert hasattr(session, "lesson_citations"), "TranscriptSummary should have lesson_citations field"
         assert session.lesson_citations == []
+
+
+# ============================================================================
+# Origin Detection Tests
+# ============================================================================
+
+# Sample transcript data for different session types
+EXPLORE_AGENT_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-explore-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:00:00.000Z",
+    "sessionId": "explore-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Explore the codebase to find files related to authentication. Look for login handlers and session management."
+    },
+    "userType": "external"
+}
+
+PLAN_AGENT_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-plan-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:01:00.000Z",
+    "sessionId": "plan-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Plan the implementation approach for adding OAuth2 support. Design a strategy that integrates with existing auth."
+    },
+    "userType": "external"
+}
+
+GENERAL_AGENT_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-general-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:02:00.000Z",
+    "sessionId": "general-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Implement the OAuth2 authentication flow according to the plan. Fix any type errors and refactor the token storage."
+    },
+    "userType": "external"
+}
+
+USER_SESSION_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-user-session-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:03:00.000Z",
+    "sessionId": "user-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "How do I add a new feature to handle user preferences? I'm not sure where to start."
+    },
+    "userType": "external"
+}
+
+UNKNOWN_SYSTEM_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-unknown-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:04:00.000Z",
+    "sessionId": "unknown-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "<local-command-caveat>Warmup session for model initialization</local-command-caveat>"
+    },
+    "userType": "external"
+}
+
+EMPTY_PROMPT_MESSAGE = {
+    "type": "user",
+    "uuid": "msg-empty-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:05:00.000Z",
+    "sessionId": "empty-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": ""
+    },
+    "userType": "external"
+}
+
+
+@pytest.fixture
+def temp_claude_home_with_origins(tmp_path):
+    """Create a temporary ~/.claude structure with various session types."""
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    project_dir = projects_dir / "-Users-test-code-myproject"
+    project_dir.mkdir(parents=True)
+
+    # Create transcripts for each session type
+    sessions = [
+        ("explore-session-id.jsonl", EXPLORE_AGENT_MESSAGE),
+        ("plan-session-id.jsonl", PLAN_AGENT_MESSAGE),
+        ("general-session-id.jsonl", GENERAL_AGENT_MESSAGE),
+        ("user-session-id.jsonl", USER_SESSION_MESSAGE),
+        ("unknown-session-id.jsonl", UNKNOWN_SYSTEM_MESSAGE),
+        ("empty-session-id.jsonl", EMPTY_PROMPT_MESSAGE),
+    ]
+
+    for filename, user_msg in sessions:
+        transcript_path = project_dir / filename
+        with open(transcript_path, "w") as f:
+            f.write(json.dumps(user_msg) + "\n")
+            # Add a simple assistant response
+            assistant_msg = {
+                "type": "assistant",
+                "uuid": f"msg-asst-{filename}",
+                "parentUuid": user_msg["uuid"],
+                "timestamp": "2026-01-07T10:10:00.000Z",
+                "sessionId": user_msg["sessionId"],
+                "message": {
+                    "role": "assistant",
+                    "id": f"msg_{filename}",
+                    "model": "claude-opus-4-5-20251101",
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 100, "output_tokens": 50},
+                    "content": [{"type": "text", "text": "Response text."}]
+                }
+            }
+            f.write(json.dumps(assistant_msg) + "\n")
+
+    return claude_home
+
+
+class TestOriginDetectionFunction:
+    """Test the detect_origin() function for classifying session types."""
+
+    def test_detect_origin_function_exists(self):
+        """detect_origin function should be importable."""
+        from core.tui.transcript_reader import detect_origin
+        assert callable(detect_origin)
+
+    def test_detect_explore_starts_with_explore(self):
+        """Prompts starting with 'Explore' should return 'Explore'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Explore the codebase for authentication code") == "Explore"
+
+    def test_detect_explore_starts_with_search(self):
+        """Prompts starting with 'Search' should return 'Explore'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Search for files containing login logic") == "Explore"
+
+    def test_detect_explore_starts_with_find(self):
+        """Prompts starting with 'Find' should return 'Explore'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Find all test files in the project") == "Explore"
+
+    def test_detect_explore_starts_with_investigate(self):
+        """Prompts starting with 'Investigate' should return 'Explore'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Investigate the error handling in api.py") == "Explore"
+
+    def test_detect_explore_contains_in_codebase(self):
+        """Prompts containing 'in the codebase' should return 'Explore'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Look at how auth works in the codebase") == "Explore"
+
+    def test_detect_plan_starts_with_plan(self):
+        """Prompts starting with 'Plan' should return 'Plan'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Plan the implementation of OAuth2 support") == "Plan"
+
+    def test_detect_plan_starts_with_design(self):
+        """Prompts starting with 'Design' should return 'Plan'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Design a strategy for migrating the database") == "Plan"
+
+    def test_detect_plan_contains_implementation_plan(self):
+        """Prompts containing 'implementation plan' should return 'Plan'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Create an implementation plan for the new feature") == "Plan"
+
+    def test_detect_general_starts_with_implement(self):
+        """Prompts starting with 'Implement' should return 'General'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Implement the login form validation") == "General"
+
+    def test_detect_general_starts_with_fix(self):
+        """Prompts starting with 'Fix' should return 'General'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Fix the bug in the session handler") == "General"
+
+    def test_detect_general_starts_with_refactor(self):
+        """Prompts starting with 'Refactor' should return 'General'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Refactor the database connection code") == "General"
+
+    def test_detect_general_starts_with_review(self):
+        """Prompts starting with 'Review' should return 'General'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Review the pull request changes") == "General"
+
+    def test_detect_unknown_local_command_caveat(self):
+        """Prompts containing '<local-command-caveat>' should return 'Unknown'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("<local-command-caveat>Some system message</local-command-caveat>") == "Unknown"
+
+    def test_detect_warmup(self):
+        """Prompts starting with 'Warmup' should return 'Warmup'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Warmup session initializing") == "Warmup"
+        assert detect_origin("Warmup") == "Warmup"
+
+    def test_detect_unknown_empty_prompt(self):
+        """Empty prompts should return 'Unknown'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("") == "Unknown"
+
+    def test_detect_unknown_very_short_prompt(self):
+        """Very short prompts (< 3 chars) should return 'Unknown'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Hi") == "Unknown"
+
+    def test_detect_user_natural_question(self):
+        """Natural language questions should return 'User'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("How do I add a new feature?") == "User"
+
+    def test_detect_user_help_request(self):
+        """Help requests should return 'User'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Can you help me understand the codebase?") == "User"
+
+    def test_detect_user_default(self):
+        """Unrecognized patterns should default to 'User'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Just a random message that doesn't match patterns") == "User"
+
+    def test_detect_case_insensitive(self):
+        """Detection should be case-insensitive."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("explore the files") == "Explore"
+        assert detect_origin("EXPLORE THE FILES") == "Explore"
+        assert detect_origin("Explore The Files") == "Explore"
+
+
+class TestOriginFieldInSummary:
+    """Test that TranscriptSummary includes origin field."""
+
+    def test_summary_has_origin_field(self, temp_claude_home_with_origins):
+        """TranscriptSummary should have origin field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "origin") for s in sessions)
+
+    def test_explore_session_detected(self, temp_claude_home_with_origins):
+        """Explore agent session should have origin='Explore'."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "explore-session-id")
+        assert session.origin == "Explore"
+
+    def test_plan_session_detected(self, temp_claude_home_with_origins):
+        """Plan agent session should have origin='Plan'."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "plan-session-id")
+        assert session.origin == "Plan"
+
+    def test_general_session_detected(self, temp_claude_home_with_origins):
+        """General agent session should have origin='General'."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "general-session-id")
+        assert session.origin == "General"
+
+    def test_user_session_detected(self, temp_claude_home_with_origins):
+        """User session should have origin='User'."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "user-session-id")
+        assert session.origin == "User"
+
+    def test_unknown_session_detected(self, temp_claude_home_with_origins):
+        """System/unknown session should have origin='Unknown'."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "unknown-session-id")
+        assert session.origin == "Unknown"
+
+
+# ============================================================================
+# Parent-Child Session Linking Tests
+# ============================================================================
+
+# Create sessions with overlapping time ranges for parent-child linking
+PARENT_SESSION_START = {
+    "type": "user",
+    "uuid": "msg-parent-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:00:00.000Z",
+    "sessionId": "parent-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Help me implement a new authentication system."
+    },
+    "userType": "external"
+}
+
+PARENT_SESSION_MIDDLE = {
+    "type": "assistant",
+    "uuid": "msg-parent-002",
+    "parentUuid": "msg-parent-001",
+    "timestamp": "2026-01-07T10:05:00.000Z",
+    "sessionId": "parent-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_parent_001",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 200},
+        "content": [{"type": "text", "text": "I'll help you with that. Let me explore the codebase first."}]
+    }
+}
+
+PARENT_SESSION_END = {
+    "type": "assistant",
+    "uuid": "msg-parent-003",
+    "parentUuid": "msg-parent-002",
+    "timestamp": "2026-01-07T10:30:00.000Z",
+    "sessionId": "parent-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_parent_002",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 150, "output_tokens": 100},
+        "content": [{"type": "text", "text": "Done!"}]
+    }
+}
+
+# Child session starts during parent's active time (10:10, between 10:00 and 10:30)
+CHILD_EXPLORE_SESSION = {
+    "type": "user",
+    "uuid": "msg-child-explore-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:10:00.000Z",
+    "sessionId": "child-explore-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Explore the authentication module and find how sessions are handled."
+    },
+    "userType": "external"
+}
+
+CHILD_EXPLORE_END = {
+    "type": "assistant",
+    "uuid": "msg-child-explore-002",
+    "parentUuid": "msg-child-explore-001",
+    "timestamp": "2026-01-07T10:15:00.000Z",
+    "sessionId": "child-explore-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_child_explore",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 150},
+        "content": [{"type": "text", "text": "Found the session handling code."}]
+    }
+}
+
+# Another child session starts at 10:20
+CHILD_GENERAL_SESSION = {
+    "type": "user",
+    "uuid": "msg-child-general-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T10:20:00.000Z",
+    "sessionId": "child-general-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Implement the token refresh logic based on the exploration results."
+    },
+    "userType": "external"
+}
+
+CHILD_GENERAL_END = {
+    "type": "assistant",
+    "uuid": "msg-child-general-002",
+    "parentUuid": "msg-child-general-001",
+    "timestamp": "2026-01-07T10:25:00.000Z",
+    "sessionId": "child-general-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_child_general",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 200},
+        "content": [{"type": "text", "text": "Token refresh implemented."}]
+    }
+}
+
+# Independent session (no overlap with parent)
+INDEPENDENT_SESSION = {
+    "type": "user",
+    "uuid": "msg-independent-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-07T11:00:00.000Z",  # After parent ends
+    "sessionId": "independent-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Help me with something completely different."
+    },
+    "userType": "external"
+}
+
+INDEPENDENT_END = {
+    "type": "assistant",
+    "uuid": "msg-independent-002",
+    "parentUuid": "msg-independent-001",
+    "timestamp": "2026-01-07T11:05:00.000Z",
+    "sessionId": "independent-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_independent",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 50, "output_tokens": 75},
+        "content": [{"type": "text", "text": "Sure!"}]
+    }
+}
+
+
+@pytest.fixture
+def temp_claude_home_with_parent_child(tmp_path):
+    """Create a temporary ~/.claude structure with parent-child session relationships."""
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    project_dir = projects_dir / "-Users-test-code-myproject"
+    project_dir.mkdir(parents=True)
+
+    # Create parent session (10:00 - 10:30)
+    parent_transcript = project_dir / "parent-session-id.jsonl"
+    with open(parent_transcript, "w") as f:
+        f.write(json.dumps(PARENT_SESSION_START) + "\n")
+        f.write(json.dumps(PARENT_SESSION_MIDDLE) + "\n")
+        f.write(json.dumps(PARENT_SESSION_END) + "\n")
+
+    # Create child explore session (10:10 - 10:15, within parent's range)
+    child_explore = project_dir / "child-explore-session-id.jsonl"
+    with open(child_explore, "w") as f:
+        f.write(json.dumps(CHILD_EXPLORE_SESSION) + "\n")
+        f.write(json.dumps(CHILD_EXPLORE_END) + "\n")
+
+    # Create child general session (10:20 - 10:25, within parent's range)
+    child_general = project_dir / "child-general-session-id.jsonl"
+    with open(child_general, "w") as f:
+        f.write(json.dumps(CHILD_GENERAL_SESSION) + "\n")
+        f.write(json.dumps(CHILD_GENERAL_END) + "\n")
+
+    # Create independent session (11:00 - 11:05, after parent)
+    independent = project_dir / "independent-session-id.jsonl"
+    with open(independent, "w") as f:
+        f.write(json.dumps(INDEPENDENT_SESSION) + "\n")
+        f.write(json.dumps(INDEPENDENT_END) + "\n")
+
+    return claude_home
+
+
+class TestParentChildLinkingFields:
+    """Test that TranscriptSummary includes parent-child linking fields."""
+
+    def test_summary_has_parent_session_id_field(self, temp_claude_home_with_parent_child):
+        """TranscriptSummary should have parent_session_id field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "parent_session_id") for s in sessions)
+
+    def test_summary_has_child_session_ids_field(self, temp_claude_home_with_parent_child):
+        """TranscriptSummary should have child_session_ids field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "child_session_ids") for s in sessions)
+
+
+class TestParentChildLinking:
+    """Test parent-child session linking via temporal inference."""
+
+    def test_child_explore_linked_to_parent(self, temp_claude_home_with_parent_child):
+        """Explore child session should be linked to parent."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        child = next(s for s in sessions if s.session_id == "child-explore-session-id")
+        assert child.parent_session_id == "parent-session-id"
+
+    def test_child_general_linked_to_parent(self, temp_claude_home_with_parent_child):
+        """General child session should be linked to parent."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        child = next(s for s in sessions if s.session_id == "child-general-session-id")
+        assert child.parent_session_id == "parent-session-id"
+
+    def test_parent_has_child_ids(self, temp_claude_home_with_parent_child):
+        """Parent session should have child_session_ids populated."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        parent = next(s for s in sessions if s.session_id == "parent-session-id")
+        assert "child-explore-session-id" in parent.child_session_ids
+        assert "child-general-session-id" in parent.child_session_ids
+
+    def test_independent_session_no_parent(self, temp_claude_home_with_parent_child):
+        """Independent session should have no parent."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        independent = next(s for s in sessions if s.session_id == "independent-session-id")
+        assert independent.parent_session_id is None
+
+    def test_user_session_not_linked_as_child(self, temp_claude_home_with_parent_child):
+        """User-origin sessions should not be linked as children even if overlapping."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        parent = next(s for s in sessions if s.session_id == "parent-session-id")
+        # Parent is a User session, should not be listed as a child of anything
+        assert parent.parent_session_id is None
+
+    def test_linking_uses_temporal_overlap(self, temp_claude_home_with_parent_child):
+        """Child sessions should only link if they start during parent's active window."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_parent_child)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        # Independent session starts after parent ends, should not be linked
+        independent = next(s for s in sessions if s.session_id == "independent-session-id")
+        assert independent.parent_session_id is None
+
+        parent = next(s for s in sessions if s.session_id == "parent-session-id")
+        assert "independent-session-id" not in parent.child_session_ids

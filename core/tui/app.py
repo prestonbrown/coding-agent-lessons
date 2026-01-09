@@ -488,10 +488,12 @@ class RecallMonitorApp(App):
         Binding("f3", "switch_tab('state')", "State"),
         Binding("f4", "switch_tab('session')", "Session"),
         Binding("f5", "switch_tab('charts')", "Charts"),
+        Binding("f6", "switch_tab('handoffs')", "Handoffs"),
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_all", "All"),
         Binding("e", "expand_session", "Expand"),
+        Binding("c", "toggle_completed", "Completed"),
         Binding("ctrl+c", "copy_session", "Copy", priority=True),
     ]
 
@@ -525,6 +527,11 @@ class RecallMonitorApp(App):
         # Unified toggle: False = current project, non-empty sessions
         #                 True = all projects, all sessions (including empty)
         self._show_all: bool = False
+        # Handoffs tab state
+        self._handoff_data: dict = {}  # Raw data by handoff_id
+        self._handoff_sort_column: Optional[str] = None
+        self._handoff_sort_reverse: bool = False
+        self._show_completed_handoffs: bool = False
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -552,6 +559,14 @@ class RecallMonitorApp(App):
                     DataTable(id="session-list"),
                     Static("Session Events", classes="section-title"),
                     RichLog(id="session-events", highlight=True, markup=True, wrap=True, auto_scroll=False),
+                )
+
+            with TabPane("Handoffs", id="handoffs"):
+                yield Vertical(
+                    Static("Handoffs", classes="section-title"),
+                    DataTable(id="handoff-list"),
+                    Static("Handoff Details", classes="section-title"),
+                    RichLog(id="handoff-details", highlight=True, markup=True, wrap=True, auto_scroll=False),
                 )
 
             with TabPane("Charts", id="charts"):
@@ -591,6 +606,11 @@ class RecallMonitorApp(App):
             self.notify(f"Error setting up sessions: {e}", severity="error")
 
         try:
+            self._setup_handoff_list()
+        except Exception as e:
+            self.notify(f"Error setting up handoffs: {e}", severity="error")
+
+        try:
             self._update_charts()
         except Exception as e:
             self.notify(f"Error updating charts: {e}", severity="error")
@@ -622,6 +642,7 @@ class RecallMonitorApp(App):
         self._update_subtitle()
         if not self._paused:
             self._refresh_events()
+            self._refresh_session_list()
 
     @work(exclusive=True)
     async def _refresh_events(self) -> None:
@@ -754,19 +775,33 @@ class RecallMonitorApp(App):
         try:
             handoffs = self.state_reader.get_handoffs()
             active_handoffs = [h for h in handoffs if h.is_active]
+            stats = self.state_reader.get_handoff_stats(handoffs)
 
             lines.append("[bold]Handoffs[/bold]")
-            lines.append(f"  Total: {len(handoffs)}")
-            lines.append(f"  Active: {len(active_handoffs)}")
+            lines.append(
+                f"  Total: {stats['total_count']} | "
+                f"Active: {stats['active_count']} | "
+                f"Blocked: {stats['blocked_count']}"
+            )
+
+            # Age statistics
+            if stats["total_count"] > 0:
+                age_stats = stats["age_stats"]
+                lines.append(
+                    f"  Age: {age_stats['min_age_days']}d - {age_stats['max_age_days']}d "
+                    f"(avg: {age_stats['avg_age_days']:.1f}d) | "
+                    f"Stale: {stats['stale_count']}"
+                )
             lines.append("")
 
             if active_handoffs:
                 lines.append("[bold]Active Handoffs[/bold]")
                 for h in active_handoffs:
                     status_color = "red" if h.is_blocked else "yellow" if h.status == "ready_for_review" else "green"
-                    # "  [hf-xxxxxxx] " = 15 chars prefix
-                    title_width = max(20, available_width - 15)
-                    lines.append(f"  [{h.id}] {truncate(h.title, title_width)}")
+                    # "  [hf-xxxxxxx] " = 17 chars prefix (escaped brackets)
+                    title_width = max(20, available_width - 17)
+                    # Escape brackets to prevent Rich markup interpretation
+                    lines.append(f"  \\[{h.id}] {truncate(h.title, title_width)}")
                     lines.append(f"    [{status_color}]{h.status}[/{status_color}] | {h.phase}")
                 lines.append("")
 
@@ -797,8 +832,11 @@ class RecallMonitorApp(App):
         session_table.cursor_type = "row"
 
         # Add columns with keys for sorting
+        # Project column only shown in all-projects mode
         session_table.add_column("Session ID", key="session_id")
-        session_table.add_column("Project", key="project")
+        if self._show_all:
+            session_table.add_column("Project", key="project")
+        session_table.add_column("Origin", key="origin")
         session_table.add_column("Topic", key="topic")
         session_table.add_column("Started", key="started")
         session_table.add_column("Last", key="last_activity")
@@ -822,34 +860,52 @@ class RecallMonitorApp(App):
             session_id = summary.session_id
             self._session_data[session_id] = summary
 
-            # Format display values
-            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
-            topic = topic.replace("\n", " ")  # Remove newlines for display
-            total_tools = sum(summary.tool_breakdown.values())
+            self._populate_session_row(session_table, session_id, summary)
 
-            session_table.add_row(
-                session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                summary.project[:12],
-                topic,
-                _format_session_time(summary.start_time),
-                _format_session_time(summary.last_activity),
-                str(total_tools),
-                _format_tokens(summary.total_tokens),
-                str(summary.message_count),
-                key=session_id,
-            )
+    def _populate_session_row(
+        self, session_table: DataTable, session_id: str, summary: TranscriptSummary
+    ) -> None:
+        """Add a row to the session table with formatted values.
+
+        Args:
+            session_table: The DataTable widget to add the row to
+            session_id: The session identifier (used as row key)
+            summary: TranscriptSummary containing session data
+        """
+        # Format display values
+        topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+        topic = topic.replace("\n", " ")  # Remove newlines for display
+        total_tools = sum(summary.tool_breakdown.values())
+
+        # Build row data - Project column only in all-projects mode
+        row_data = [session_id[:12] + "..." if len(session_id) > 15 else session_id]
+        if self._show_all:
+            row_data.append(summary.project[:12])
+        row_data.extend([
+            summary.origin,
+            topic,
+            _format_session_time(summary.start_time),
+            _format_session_time(summary.last_activity),
+            str(total_tools),
+            _format_tokens(summary.total_tokens),
+            str(summary.message_count),
+        ])
+
+        session_table.add_row(*row_data, key=session_id)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Handle session highlight (arrow key navigation) in the session list."""
-        if event.data_table.id != "session-list":
-            return
-
+        """Handle row highlight (arrow key navigation) in data tables."""
         if event.row_key is None:
             return
 
-        session_id = event.row_key.value
-        if session_id:
-            self._show_session_events(session_id)
+        row_key = event.row_key.value
+        if not row_key:
+            return
+
+        if event.data_table.id == "session-list":
+            self._show_session_events(row_key)
+        elif event.data_table.id == "handoff-list":
+            self._show_handoff_details(row_key)
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
         """Handle column header click to sort the session table."""
@@ -883,6 +939,8 @@ class RecallMonitorApp(App):
                 return session_id
             elif column_key == "project":
                 return summary.project
+            elif column_key == "origin":
+                return summary.origin
             elif column_key == "topic":
                 return summary.first_prompt
             elif column_key == "started":
@@ -911,22 +969,7 @@ class RecallMonitorApp(App):
             if not isinstance(summary, TranscriptSummary):
                 continue
 
-            # Format display values
-            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
-            topic = topic.replace("\n", " ")  # Remove newlines for display
-            total_tools = sum(summary.tool_breakdown.values())
-
-            session_table.add_row(
-                session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                summary.project[:12],
-                topic,
-                _format_session_time(summary.start_time),
-                _format_session_time(summary.last_activity),
-                str(total_tools),
-                _format_tokens(summary.total_tokens),
-                str(summary.message_count),
-                key=session_id,
-            )
+            self._populate_session_row(session_table, session_id, summary)
 
     def _show_session_events(self, session_id: str) -> None:
         """Display transcript timeline for a selected session."""
@@ -1007,6 +1050,192 @@ class RecallMonitorApp(App):
 
         # Defer scroll to after refresh so content is fully rendered
         self.call_after_refresh(session_log.scroll_home)
+
+    # -------------------------------------------------------------------------
+    # Handoffs Tab Methods
+    # -------------------------------------------------------------------------
+
+    def _setup_handoff_list(self) -> None:
+        """Initialize the handoff list DataTable with sortable columns."""
+        handoff_table = self.query_one("#handoff-list", DataTable)
+
+        # Enable row cursor for RowHighlighted events on arrow key navigation
+        handoff_table.cursor_type = "row"
+
+        # Add columns with keys for sorting
+        handoff_table.add_column("ID", key="id")
+        handoff_table.add_column("Title", key="title")
+        handoff_table.add_column("Status", key="status")
+        handoff_table.add_column("Phase", key="phase")
+        handoff_table.add_column("Agent", key="agent")
+        handoff_table.add_column("Age", key="age")
+        handoff_table.add_column("Updated", key="updated")
+        handoff_table.add_column("Tried", key="tried")
+        handoff_table.add_column("Next", key="next")
+
+        # Clear any existing handoff data
+        self._handoff_data.clear()
+
+        # Get handoffs from StateReader
+        handoffs = self.state_reader.get_handoffs()
+
+        for handoff in handoffs:
+            # Skip completed unless toggled on
+            if not self._show_completed_handoffs and handoff.status == "completed":
+                continue
+
+            self._handoff_data[handoff.id] = handoff
+            self._populate_handoff_row(handoff_table, handoff)
+
+    def _populate_handoff_row(
+        self, handoff_table: DataTable, handoff: HandoffSummary
+    ) -> None:
+        """Add a row to the handoff table with formatted values.
+
+        Args:
+            handoff_table: The DataTable widget to add the row to
+            handoff: HandoffSummary containing handoff data
+        """
+        # Format title (truncate if needed)
+        title = handoff.title[:30] + "..." if len(handoff.title) > 30 else handoff.title
+
+        # Format status with color markup
+        status_colors = {
+            "not_started": "dim",
+            "in_progress": "green",
+            "blocked": "red",
+            "ready_for_review": "yellow",
+            "completed": "cyan",
+        }
+        status_color = status_colors.get(handoff.status, "white")
+        status_display = f"[{status_color}]{handoff.status}[/{status_color}]"
+
+        # Format age
+        age_display = f"{handoff.age_days}d"
+
+        # Format updated date
+        updated_display = handoff.updated if handoff.updated else "-"
+
+        # Count tried and next steps
+        tried_count = str(len(handoff.tried_steps))
+        next_count = str(len(handoff.next_steps))
+
+        row_data = [
+            handoff.id[:12] if len(handoff.id) > 12 else handoff.id,
+            title,
+            status_display,
+            handoff.phase,
+            handoff.agent[:10] if len(handoff.agent) > 10 else handoff.agent,
+            age_display,
+            updated_display,
+            tried_count,
+            next_count,
+        ]
+
+        handoff_table.add_row(*row_data, key=handoff.id)
+
+    def _show_handoff_details(self, handoff_id: str) -> None:
+        """Display details for a selected handoff."""
+        details_log = self.query_one("#handoff-details", RichLog)
+        details_log.clear()
+
+        handoff = self._handoff_data.get(handoff_id)
+        if handoff is None:
+            details_log.write("[dim]No handoff data available[/dim]")
+            return
+
+        # Header with ID and title
+        details_log.write(f"[bold cyan]{handoff.id}[/bold cyan] {handoff.title}")
+        details_log.write("")
+
+        # Status line
+        status_colors = {
+            "not_started": "dim",
+            "in_progress": "green",
+            "blocked": "red",
+            "ready_for_review": "yellow",
+            "completed": "cyan",
+        }
+        status_color = status_colors.get(handoff.status, "white")
+        details_log.write(
+            f"[bold]Status:[/bold] [{status_color}]{handoff.status}[/{status_color}] | "
+            f"[bold]Phase:[/bold] {handoff.phase} | "
+            f"[bold]Agent:[/bold] {handoff.agent}"
+        )
+
+        # Dates
+        details_log.write(
+            f"[bold]Created:[/bold] {handoff.created} | "
+            f"[bold]Updated:[/bold] {handoff.updated} | "
+            f"[bold]Age:[/bold] {handoff.age_days} days"
+        )
+        details_log.write("")
+
+        # Description
+        if handoff.description:
+            details_log.write(f"[bold]Description:[/bold] {handoff.description}")
+            details_log.write("")
+
+        # Tried steps
+        if handoff.tried_steps:
+            details_log.write(f"[bold]Tried ({len(handoff.tried_steps)} steps):[/bold]")
+            for i, step in enumerate(handoff.tried_steps, 1):
+                outcome_colors = {"success": "green", "fail": "red", "partial": "yellow"}
+                color = outcome_colors.get(step.outcome, "white")
+                details_log.write(f"  {i}. [{color}]{step.outcome}[/{color}] {step.description}")
+            details_log.write("")
+
+        # Next steps
+        if handoff.next_steps:
+            details_log.write(f"[bold]Next ({len(handoff.next_steps)} items):[/bold]")
+            for item in handoff.next_steps:
+                details_log.write(f"  - {item}")
+            details_log.write("")
+
+        # Refs
+        if handoff.refs:
+            details_log.write(f"[bold]Refs:[/bold] {', '.join(handoff.refs)}")
+            details_log.write("")
+
+        # Checkpoint
+        if handoff.checkpoint:
+            details_log.write(f"[bold]Checkpoint:[/bold] {handoff.checkpoint}")
+
+        # Scroll to top
+        self.call_after_refresh(details_log.scroll_home)
+
+    def _refresh_handoff_list(self) -> None:
+        """Refresh the handoffs list with current filter settings."""
+        handoff_table = self.query_one("#handoff-list", DataTable)
+        handoff_table.clear()
+        self._handoff_data.clear()
+
+        # Get handoffs from StateReader
+        handoffs = self.state_reader.get_handoffs()
+
+        for handoff in handoffs:
+            # Skip completed unless toggled on
+            if not self._show_completed_handoffs and handoff.status == "completed":
+                continue
+
+            self._handoff_data[handoff.id] = handoff
+            self._populate_handoff_row(handoff_table, handoff)
+
+    def action_toggle_completed(self) -> None:
+        """Toggle visibility of completed handoffs."""
+        # Only applies when on handoffs tab
+        try:
+            tabs = self.query_one(TabbedContent)
+            if tabs.active != "handoffs":
+                return
+        except Exception:
+            return
+
+        self._show_completed_handoffs = not self._show_completed_handoffs
+        self._refresh_handoff_list()
+
+        status = "shown" if self._show_completed_handoffs else "hidden"
+        self.notify(f"Completed handoffs: {status}")
 
     def _update_charts(self) -> None:
         """Update charts panel with sparklines and plotext charts."""
@@ -1152,6 +1381,7 @@ class RecallMonitorApp(App):
         self._load_events()
         self._update_health()
         self._update_state()
+        self._refresh_session_list()
         self._update_charts()
         self.notify("Refreshed")
 
@@ -1264,9 +1494,36 @@ class RecallMonitorApp(App):
             self.notify(f"Copy failed: {e}", severity="error")
 
     def _refresh_session_list(self) -> None:
-        """Refresh the session list table with current filter settings."""
+        """Refresh the session list table with current filter settings.
+
+        Rebuilds columns when show_all toggle changes (to show/hide Project column).
+        """
         session_table = self.query_one("#session-list", DataTable)
-        session_table.clear()
+
+        # Check if we need to rebuild columns (Project column visibility changed)
+        column_labels = [str(col.label) for col in session_table.columns.values()]
+        has_project_col = "Project" in column_labels
+        needs_project_col = self._show_all
+
+        if has_project_col != needs_project_col:
+            # Need to rebuild columns - clear everything first
+            session_table.clear(columns=True)
+
+            # Re-add columns with correct Project visibility
+            session_table.add_column("Session ID", key="session_id")
+            if self._show_all:
+                session_table.add_column("Project", key="project")
+            session_table.add_column("Origin", key="origin")
+            session_table.add_column("Topic", key="topic")
+            session_table.add_column("Started", key="started")
+            session_table.add_column("Last", key="last_activity")
+            session_table.add_column("Tools", key="tools")
+            session_table.add_column("Tokens", key="tokens")
+            session_table.add_column("Msgs", key="messages")
+        else:
+            # Just clear rows, keep columns
+            session_table.clear()
+
         self._session_data.clear()
 
         # Get sessions from TranscriptReader
@@ -1282,22 +1539,7 @@ class RecallMonitorApp(App):
             session_id = summary.session_id
             self._session_data[session_id] = summary
 
-            # Format display values
-            topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
-            topic = topic.replace("\n", " ")  # Remove newlines for display
-            total_tools = sum(summary.tool_breakdown.values())
-
-            session_table.add_row(
-                session_id[:12] + "..." if len(session_id) > 15 else session_id,
-                summary.project[:12],
-                topic,
-                _format_session_time(summary.start_time),
-                _format_session_time(summary.last_activity),
-                str(total_tools),
-                _format_tokens(summary.total_tokens),
-                str(summary.message_count),
-                key=session_id,
-            )
+            self._populate_session_row(session_table, session_id, summary)
 
     def _get_dynamic_subtitle(self) -> str:
         """Build dynamic subtitle showing status."""

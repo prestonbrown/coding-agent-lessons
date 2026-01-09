@@ -608,8 +608,8 @@ class TestSessionTableIntegration:
             # Find the row for sess-recent and check its data
             for row_key in session_table.rows.keys():
                 if str(row_key.value) == "sess-recent":
-                    # Get row data - columns are in order:
-                    # Session ID, Project, Topic, Started, Last, Tools, Tokens, Msgs
+                    # Get row data - columns are in order (single-project mode, no Project col):
+                    # Session ID, Origin, Topic, Started, Last, Tools, Tokens, Msgs
                     row_data = session_table.get_row(row_key)
 
                     # Topic column (index 2) should show first prompt
@@ -760,7 +760,7 @@ class TestSessionTableIntegration:
     async def test_session_table_project_column(
         self, mock_claude_home: Path, temp_state_dir: Path
     ):
-        """Project column shows correct project name."""
+        """Project column shows correct project name (visible in all-projects mode)."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -770,9 +770,13 @@ class TestSessionTableIntegration:
             await pilot.press("f4")
             await pilot.pause()
 
+            # Toggle to all-projects mode (so Project column is visible)
+            await pilot.press("a")
+            await pilot.pause()
+
             session_table = app.query_one("#session-list", DataTable)
 
-            # Find any row and check project column
+            # Find any row and check project column (index 1 in all-projects mode)
             for row_key in session_table.rows.keys():
                 row_data = session_table.get_row(row_key)
                 project_value = str(row_data[1])
@@ -1547,3 +1551,350 @@ class TestHandoffCorrelationDisplay:
         match = _find_matching_handoff(session_date, handoffs)
 
         assert match is None, "Should not find matching handoff"
+
+
+# ============================================================================
+# Tests for Origin Column
+# ============================================================================
+
+
+def create_transcript_with_origin(
+    path: Path,
+    first_prompt: str,
+    start_time: str,
+    end_time: str,
+) -> None:
+    """Create a mock transcript JSONL file with specific first prompt for origin testing."""
+    messages = []
+
+    # User message
+    messages.append(
+        {
+            "type": "user",
+            "timestamp": start_time,
+            "sessionId": path.stem,
+            "message": {"role": "user", "content": first_prompt},
+        }
+    )
+
+    # Assistant message
+    messages.append(
+        {
+            "type": "assistant",
+            "timestamp": end_time,
+            "sessionId": path.stem,
+            "message": {
+                "role": "assistant",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [{"type": "text", "text": "Done"}],
+            },
+        }
+    )
+
+    with open(path, "w") as f:
+        for msg in messages:
+            f.write(json.dumps(msg) + "\n")
+
+
+@pytest.fixture
+def mock_claude_home_with_origins(tmp_path: Path, monkeypatch) -> Path:
+    """Create a mock ~/.claude directory with sessions of various origins."""
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    project_dir = projects_dir / "-Users-test-code-project-b"
+    project_dir.mkdir(parents=True)
+
+    # Create sessions with different origin patterns
+    sessions = [
+        ("sess-explore.jsonl", "Explore the codebase for authentication code"),
+        ("sess-plan.jsonl", "Plan the implementation of OAuth2 support"),
+        ("sess-general.jsonl", "Implement the login form validation"),
+        ("sess-user.jsonl", "How do I add a new feature?"),
+        ("sess-unknown.jsonl", "<local-command-caveat>System message</local-command-caveat>"),
+    ]
+
+    for i, (filename, prompt) in enumerate(sessions):
+        create_transcript_with_origin(
+            project_dir / filename,
+            first_prompt=prompt,
+            start_time=make_timestamp(60 - i * 10),
+            end_time=make_timestamp(55 - i * 10),
+        )
+
+    monkeypatch.setenv("PROJECT_DIR", "/Users/test/code/project-b")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    return claude_home
+
+
+class TestOriginColumn:
+    """Tests for the Origin column in session table."""
+
+    @pytest.mark.asyncio
+    async def test_session_table_has_origin_column(
+        self, mock_claude_home_with_origins: Path, temp_state_dir: Path
+    ):
+        """Session table should have an Origin column."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Get column labels
+            column_labels = [str(col.label) for col in session_table.columns.values()]
+
+            assert "Origin" in column_labels, (
+                f"Expected 'Origin' column, but columns are: {column_labels}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_origin_column_shows_correct_values(
+        self, mock_claude_home_with_origins: Path, temp_state_dir: Path
+    ):
+        """Origin column should show correct values for each session type."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Get the session data from the cached data
+            session_data = app._session_data
+
+            # Check each session has expected origin
+            explore_session = session_data.get("sess-explore")
+            assert explore_session is not None, "sess-explore should be in session data"
+            assert explore_session.origin == "Explore", (
+                f"Expected 'Explore' origin, got '{explore_session.origin}'"
+            )
+
+            plan_session = session_data.get("sess-plan")
+            assert plan_session is not None, "sess-plan should be in session data"
+            assert plan_session.origin == "Plan", (
+                f"Expected 'Plan' origin, got '{plan_session.origin}'"
+            )
+
+            general_session = session_data.get("sess-general")
+            assert general_session is not None, "sess-general should be in session data"
+            assert general_session.origin == "General", (
+                f"Expected 'General' origin, got '{general_session.origin}'"
+            )
+
+            user_session = session_data.get("sess-user")
+            assert user_session is not None, "sess-user should be in session data"
+            assert user_session.origin == "User", (
+                f"Expected 'User' origin, got '{user_session.origin}'"
+            )
+
+            unknown_session = session_data.get("sess-unknown")
+            assert unknown_session is not None, "sess-unknown should be in session data"
+            assert unknown_session.origin == "Unknown", (
+                f"Expected 'Unknown' origin, got '{unknown_session.origin}'"
+            )
+
+
+# ============================================================================
+# Tests for Project Column Visibility
+# ============================================================================
+
+
+@pytest.fixture
+def mock_claude_home_multi_project(tmp_path: Path, monkeypatch) -> Path:
+    """Create a mock ~/.claude with multiple projects."""
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    # Project A
+    project_a_dir = projects_dir / "-Users-test-code-project-a"
+    project_a_dir.mkdir(parents=True)
+    create_transcript(
+        project_a_dir / "sess-a1.jsonl",
+        first_prompt="Task in project A",
+        tools=["Read"],
+        tokens=100,
+        start_time=make_timestamp(60),
+        end_time=make_timestamp(50),
+    )
+
+    # Project B
+    project_b_dir = projects_dir / "-Users-test-code-project-b"
+    project_b_dir.mkdir(parents=True)
+    create_transcript(
+        project_b_dir / "sess-b1.jsonl",
+        first_prompt="Task in project B",
+        tools=["Edit"],
+        tokens=200,
+        start_time=make_timestamp(40),
+        end_time=make_timestamp(30),
+    )
+
+    monkeypatch.setenv("PROJECT_DIR", "/Users/test/code/project-a")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    return claude_home
+
+
+class TestProjectColumnVisibility:
+    """Tests for hiding/showing Project column based on view mode."""
+
+    @pytest.mark.asyncio
+    async def test_project_column_hidden_in_single_project_mode(
+        self, mock_claude_home_multi_project: Path, temp_state_dir: Path
+    ):
+        """Project column should be hidden when viewing single project (default)."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Get column labels
+            column_labels = [str(col.label) for col in session_table.columns.values()]
+
+            # In single-project mode, Project column should NOT be present
+            assert "Project" not in column_labels, (
+                f"Project column should be hidden in single-project mode. "
+                f"Columns: {column_labels}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_project_column_visible_in_all_projects_mode(
+        self, mock_claude_home_multi_project: Path, temp_state_dir: Path
+    ):
+        """Project column should be visible when viewing all projects (after 'a' toggle)."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            # Toggle to all-projects mode
+            await pilot.press("a")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Get column labels
+            column_labels = [str(col.label) for col in session_table.columns.values()]
+
+            # In all-projects mode, Project column should be present
+            assert "Project" in column_labels, (
+                f"Project column should be visible in all-projects mode. "
+                f"Columns: {column_labels}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_toggle_back_hides_project_column(
+        self, mock_claude_home_multi_project: Path, temp_state_dir: Path
+    ):
+        """Pressing 'a' again should hide Project column."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Toggle to all-projects mode
+            await pilot.press("a")
+            await pilot.pause()
+
+            column_labels_all = [str(col.label) for col in session_table.columns.values()]
+            assert "Project" in column_labels_all, "Project should be visible after first toggle"
+
+            # Toggle back to single-project mode
+            await pilot.press("a")
+            await pilot.pause()
+
+            column_labels_single = [str(col.label) for col in session_table.columns.values()]
+            assert "Project" not in column_labels_single, (
+                "Project should be hidden after toggling back"
+            )
+
+
+# ============================================================================
+# Tests for Live Refresh
+# ============================================================================
+
+
+class TestSessionLiveRefresh:
+    """Tests for session list live refresh functionality."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_key_works_in_session_tab(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Pressing 'r' in session tab should trigger refresh."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            initial_count = session_table.row_count
+
+            # Press 'r' to refresh
+            await pilot.press("r")
+            await pilot.pause()
+
+            # Table should still have the same sessions (no new ones added)
+            # This just verifies 'r' doesn't crash and table is still populated
+            assert session_table.row_count == initial_count, (
+                f"Session count should be {initial_count} after refresh, "
+                f"got {session_table.row_count}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_timer_callback_refreshes_session_list(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """_on_refresh_timer should refresh the session list."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            initial_count = session_table.row_count
+
+            # Manually call the timer callback (simulating auto-refresh)
+            app._on_refresh_timer()
+            await pilot.pause()
+
+            # Table should still be populated
+            assert session_table.row_count == initial_count, (
+                f"Session count should be {initial_count} after timer refresh, "
+                f"got {session_table.row_count}"
+            )
