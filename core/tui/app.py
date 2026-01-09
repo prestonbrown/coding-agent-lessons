@@ -2159,7 +2159,12 @@ class RecallMonitorApp(App):
                     created_display = created.replace("T", " ").split(".")[0]
                 else:
                     created_display = created
-                details_log.write(f"  [{i}] {session_id[:12]}... ({created_display})")
+                # Show truncated ID for UUIDs, full ID for short ones
+                if len(session_id) > 20:
+                    session_display = f"{session_id[:12]}..."
+                else:
+                    session_display = session_id
+                details_log.write(f"  [{i}] {session_display} ({created_display})")
             if len(sessions) > 9:
                 details_log.write(f"  [dim]... and {len(sessions) - 9} more[/dim]")
 

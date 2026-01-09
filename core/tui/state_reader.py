@@ -141,16 +141,19 @@ class StateReader:
         r"\s*\|\s*\*\*Phase\*\*:\s*([\w-]+)"
         r"(?:\s*\|\s*\*\*Agent\*\*:\s*([\w-]+))?"
     )
+    # Match dates with optional time component (YYYY-MM-DD or YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS)
     HANDOFF_DATES_PATTERN = re.compile(
-        r"\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
+        r"\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)\s*\|\s*"
+        r"\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)"
     )
     HANDOFF_DESCRIPTION_PATTERN = re.compile(r"^\*\*Description\*\*:\s*(.+)$")
     HANDOFF_TRIED_HEADER_PATTERN = re.compile(r"^\*\*Tried\*\*\s*\(\d+\s*steps?\):")
     HANDOFF_TRIED_STEP_PATTERN = re.compile(
         r"^\s*\d+\.\s*\[(success|fail|partial)\]\s*(.+)$"
     )
-    HANDOFF_NEXT_HEADER_PATTERN = re.compile(r"^\*\*Next\*\*:")
-    HANDOFF_NEXT_STEP_PATTERN = re.compile(r"^\s*-\s*(.+)$")
+    HANDOFF_NEXT_HEADER_PATTERN = re.compile(r"^\*\*Next\*\*:\s*(.*)$")
+    # Match bullet items starting with dash, exclude separator lines (---, ----, etc.)
+    HANDOFF_NEXT_STEP_PATTERN = re.compile(r"^\s*-\s*(?!-+\s*$)(.+)$")
     HANDOFF_REFS_PATTERN = re.compile(r"^\*\*Refs\*\*:\s*(.*)$")
     HANDOFF_CHECKPOINT_PATTERN = re.compile(r"^\*\*Checkpoint\*\*:\s*(.+)$")
     HANDOFF_BLOCKED_BY_PATTERN = re.compile(r"^\s*-\s*\*\*Blocked By\*\*:\s*(.+)$")
@@ -454,11 +457,16 @@ class StateReader:
                     if line.strip() and not line.startswith(" "):
                         in_tried_section = False
 
-                # Parse next header
-                if self.HANDOFF_NEXT_HEADER_PATTERN.match(line):
+                # Parse next header (may have inline text after colon)
+                next_header_match = self.HANDOFF_NEXT_HEADER_PATTERN.match(line)
+                if next_header_match:
                     in_tried_section = False
                     in_next_section = True
                     in_context_section = False
+                    # Capture inline text if present (e.g., "**Next**: Do this thing")
+                    inline_text = next_header_match.group(1).strip()
+                    if inline_text and inline_text not in ("-", "--", "---"):
+                        next_steps.append(inline_text)
                     scan_idx += 1
                     continue
 
